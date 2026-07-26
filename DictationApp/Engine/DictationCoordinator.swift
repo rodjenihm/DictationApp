@@ -20,7 +20,7 @@ final class DictationCoordinator: ObservableObject {
     private var finalizationTask: Task<Void, Never>?
     private var elapsedTask: Task<Void, Never>?
     private var ownedArtifactURL: URL?
-    private var retainedTranscriptionSession: RetainedTranscriptionSession?
+    private var failedSessionContext: FailedSessionContext?
 
     init(
         recorder: any AudioRecorder,
@@ -37,8 +37,8 @@ final class DictationCoordinator: ObservableObject {
         self.transcriptionProvider = transcriptionProvider
         self.clipboardWriter = clipboardWriter
 
-        self.recorder.onUnexpectedCaptureFailure = { [weak self] in
-            self?.handleUnexpectedCaptureFailure()
+        self.recorder.onUnexpectedCaptureFailure = { [weak self] outcome in
+            self?.handleUnexpectedCaptureFailure(outcome)
         }
     }
 
@@ -54,6 +54,7 @@ final class DictationCoordinator: ObservableObject {
             .transcribedToClipboard,
             .noSpeech,
             .transcriptionFailed,
+            .captureFailed,
             .tooShort,
             .cancelled,
             .failed:
@@ -72,6 +73,7 @@ final class DictationCoordinator: ObservableObject {
             .completed,
             .transcribing,
             .transcriptionFailed,
+            .captureFailed,
             .tooShort,
             .cancelled,
             .failed:
@@ -91,7 +93,7 @@ final class DictationCoordinator: ObservableObject {
         sessionID = identifier
         sessionSoundCuesEnabled = soundCuesEnabled
         ownedArtifactURL = nil
-        retainedTranscriptionSession = nil
+        failedSessionContext = nil
         state = .preparing(configuration)
 
         startTask = Task { [weak self] in
@@ -169,14 +171,14 @@ final class DictationCoordinator: ObservableObject {
     func retryTranscription() {
         guard
             case .transcriptionFailed = state,
-            let retainedTranscriptionSession,
-            sessionID == retainedTranscriptionSession.identifier
+            let failedSessionContext,
+            sessionID == failedSessionContext.identifier
         else {
             return
         }
 
         state = .transcribing(
-            retainedTranscriptionSession.configuration
+            failedSessionContext.effectiveConfiguration
                 .transcriptionProvider
         )
         finalizationTask = Task { [weak self] in
@@ -184,8 +186,57 @@ final class DictationCoordinator: ObservableObject {
                 return
             }
 
-            await transcribe(retainedTranscriptionSession)
+            await transcribe(failedSessionContext)
         }
+    }
+
+    func applyTranscriptionRepair(_ repair: TranscriptionRepair) {
+        guard
+            case .transcriptionFailed(let failure) = state,
+            failure.isConfigurationFailure,
+            var failedSessionContext
+        else {
+            return
+        }
+
+        failedSessionContext.apply(repair)
+        self.failedSessionContext = failedSessionContext
+        state = .transcriptionFailed(
+            TranscriptionFailureState(
+                message:
+                    "Transcription configuration repaired. Retry the retained recording.",
+                isConfigurationFailure: true
+            )
+        )
+    }
+
+    func transcribePartial() {
+        guard
+            case .captureFailed = state,
+            let failedSessionContext,
+            sessionID == failedSessionContext.identifier
+        else {
+            return
+        }
+
+        state = .transcribing(
+            failedSessionContext.effectiveConfiguration
+                .transcriptionProvider
+        )
+        finalizationTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            await transcribe(failedSessionContext)
+        }
+    }
+
+    func discardPartial() {
+        guard case .captureFailed = state else {
+            return
+        }
+        cancel()
     }
 
     func discardTranscription() {
@@ -208,7 +259,7 @@ final class DictationCoordinator: ObservableObject {
         elapsedTask?.cancel()
         elapsedTask = nil
         activeSession = nil
-        retainedTranscriptionSession = nil
+        failedSessionContext = nil
         sessionID = nil
         sessionSoundCuesEnabled = true
 
@@ -233,7 +284,7 @@ final class DictationCoordinator: ObservableObject {
         finalizationTask = nil
         elapsedTask = nil
         activeSession = nil
-        retainedTranscriptionSession = nil
+        failedSessionContext = nil
         sessionID = nil
         sessionSoundCuesEnabled = true
         recorder.cancelImmediately()
@@ -365,12 +416,14 @@ final class DictationCoordinator: ObservableObject {
                 }
 
                 await transcribe(
-                    RetainedTranscriptionSession(
+                    FailedSessionContext(
                         identifier: activeSession.identifier,
-                        configuration: activeSession.configuration,
+                        originalConfiguration:
+                            activeSession.configuration,
                         artifact: artifact,
                         soundCuesEnabled:
-                            activeSession.soundCuesEnabled
+                            activeSession.soundCuesEnabled,
+                        transcriptionRepair: nil
                     )
                 )
             } catch is CancellationError {
@@ -386,7 +439,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func transcribe(
-        _ session: RetainedTranscriptionSession
+        _ session: FailedSessionContext
     ) async {
         guard
             sessionID == session.identifier,
@@ -396,12 +449,12 @@ final class DictationCoordinator: ObservableObject {
         }
 
         state = .transcribing(
-            session.configuration.transcriptionProvider
+            session.effectiveConfiguration.transcriptionProvider
         )
 
         do {
             guard
-                session.configuration.transcriptionProvider
+                session.effectiveConfiguration.transcriptionProvider
                     == transcriptionProvider.providerID
             else {
                 throw ProviderOperationFailure.configuration(
@@ -413,8 +466,10 @@ final class DictationCoordinator: ObservableObject {
             let transcript = try await transcriptionProvider.transcribe(
                 TranscriptionRequest(
                     artifact: session.artifact,
-                    model: session.configuration.transcriptionModel,
-                    language: session.configuration.language
+                    model:
+                        session.effectiveConfiguration.transcriptionModel,
+                    language:
+                        session.effectiveConfiguration.language
                 )
             )
 
@@ -426,7 +481,7 @@ final class DictationCoordinator: ObservableObject {
             if ownedArtifactURL == session.artifact.url {
                 ownedArtifactURL = nil
             }
-            retainedTranscriptionSession = nil
+            failedSessionContext = nil
 
             let normalizedTranscript = transcript.trimmingCharacters(
                 in: .whitespacesAndNewlines
@@ -485,7 +540,7 @@ final class DictationCoordinator: ObservableObject {
 
     private func presentTranscriptionFailure(
         _ failure: ProviderOperationFailure,
-        session: RetainedTranscriptionSession
+        session: FailedSessionContext
     ) async {
         await soundCuePlayer.play(
             .attentionRequired,
@@ -499,7 +554,7 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
-        retainedTranscriptionSession = session
+        failedSessionContext = session
         finalizationTask = nil
         state = .transcriptionFailed(
             TranscriptionFailureState(
@@ -525,12 +580,17 @@ final class DictationCoordinator: ObservableObject {
         )
     }
 
-    private func handleUnexpectedCaptureFailure() {
+    private func handleUnexpectedCaptureFailure(
+        _ outcome: UnexpectedCaptureOutcome
+    ) {
         guard
             case .recording = state,
             let activeSession,
             sessionID == activeSession.identifier
         else {
+            if case .partial(let artifact) = outcome {
+                fileStore.delete(artifact.url)
+            }
             return
         }
 
@@ -544,11 +604,70 @@ final class DictationCoordinator: ObservableObject {
                 return
             }
 
-            await presentFailure(
-                .cannotFinalizeRecording,
-                identifier: activeSession.identifier,
-                soundCuesEnabled: activeSession.soundCuesEnabled
-            )
+            switch outcome {
+            case .partial(let artifact):
+                guard sessionID == activeSession.identifier else {
+                    fileStore.delete(artifact.url)
+                    return
+                }
+
+                ownedArtifactURL = artifact.url
+
+                guard
+                    artifact.duration
+                        >= activeSession.configuration.recordingProfile
+                            .minimumDuration
+                else {
+                    fileStore.delete(artifact.url)
+                    ownedArtifactURL = nil
+                    await presentFailure(
+                        .partialRecordingTooShort,
+                        identifier: activeSession.identifier,
+                        soundCuesEnabled:
+                            activeSession.soundCuesEnabled
+                    )
+                    return
+                }
+
+                let failedContext = FailedSessionContext(
+                    identifier: activeSession.identifier,
+                    originalConfiguration:
+                        activeSession.configuration,
+                    artifact: artifact,
+                    soundCuesEnabled:
+                        activeSession.soundCuesEnabled,
+                    transcriptionRepair: nil
+                )
+                failedSessionContext = failedContext
+
+                await soundCuePlayer.play(
+                    .attentionRequired,
+                    enabled: activeSession.soundCuesEnabled
+                )
+
+                guard
+                    sessionID == activeSession.identifier,
+                    ownedArtifactURL == artifact.url
+                else {
+                    return
+                }
+
+                finalizationTask = nil
+                state = .captureFailed(
+                    RecoverableCaptureFailureState(
+                        message:
+                            "The microphone became unavailable. A partial recording can be transcribed or discarded.",
+                        artifact: artifact
+                    )
+                )
+            case .failed(let recorderError):
+                await presentFailure(
+                    map(recorderError),
+                    identifier: activeSession.identifier,
+                    soundCuesEnabled:
+                        activeSession.soundCuesEnabled
+                )
+            }
         }
     }
 
@@ -596,7 +715,7 @@ final class DictationCoordinator: ObservableObject {
         sessionID = nil
         sessionSoundCuesEnabled = true
         activeSession = nil
-        retainedTranscriptionSession = nil
+        failedSessionContext = nil
         finalizationTask = nil
         ownedArtifactURL = nil
         state = .idle
@@ -637,12 +756,5 @@ private struct ActiveSession {
     let configuration: SessionConfiguration
     let inputDeviceName: String
     let startedAt: ContinuousClock.Instant
-    let soundCuesEnabled: Bool
-}
-
-private struct RetainedTranscriptionSession {
-    let identifier: UUID
-    let configuration: SessionConfiguration
-    let artifact: AudioArtifact
     let soundCuesEnabled: Bool
 }

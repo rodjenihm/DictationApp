@@ -1,6 +1,11 @@
 import Combine
 import Foundation
 
+enum ConfigurationPresentationMode: Equatable {
+    case full
+    case transcriptionRepair
+}
+
 @MainActor
 final class ConfigurationViewModel: ObservableObject {
     static let customModelChoice = "__custom__"
@@ -28,8 +33,12 @@ final class ConfigurationViewModel: ObservableObject {
     @Published private(set) var isValidating = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var successMessage: String?
+    @Published private(set) var presentationMode:
+        ConfigurationPresentationMode = .full
 
     var onConfigurationChanged: (() -> Void)?
+    var onTranscriptionRepairValidated:
+        ((TranscriptionRepair) -> Void)?
 
     private let settingsStore: SettingsStore
     private let credentialStore: any CredentialStore
@@ -54,11 +63,16 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     var isFirstRun: Bool {
-        !hasCompletedFirstRun
+        presentationMode == .full && !hasCompletedFirstRun
     }
 
     var saveButtonTitle: String {
-        isFirstRun ? "Finish Setup" : "Save Changes"
+        switch presentationMode {
+        case .full:
+            isFirstRun ? "Finish Setup" : "Save Changes"
+        case .transcriptionRepair:
+            "Validate Repair"
+        }
     }
 
     var canSave: Bool {
@@ -74,7 +88,18 @@ final class ConfigurationViewModel: ObservableObject {
             return false
         }
 
+        if presentationMode == .transcriptionRepair {
+            return true
+        }
+
         return !postProcessingEnabled || !resolvedPostProcessingModel.isEmpty
+    }
+
+    func prepareForPresentation(
+        _ mode: ConfigurationPresentationMode
+    ) {
+        presentationMode = mode
+        reload()
     }
 
     func reload() {
@@ -159,6 +184,11 @@ final class ConfigurationViewModel: ObservableObject {
 
     func save() async {
         guard canSave else {
+            return
+        }
+
+        if presentationMode == .transcriptionRepair {
+            await saveTranscriptionRepair()
             return
         }
 
@@ -261,6 +291,95 @@ final class ConfigurationViewModel: ObservableObject {
             candidateAPIKey = ""
             successMessage = "The saved OpenAI API key was deleted."
             onConfigurationChanged?()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func saveTranscriptionRepair() async {
+        errorMessage = nil
+        successMessage = nil
+        isValidating = true
+        defer { isValidating = false }
+
+        do {
+            let candidateCredential = trimmedCandidateKey
+            let isReplacingCredential = !candidateCredential.isEmpty
+            let previousCredential =
+                try credentialStore.readCredential()
+            let credential: String
+
+            if isReplacingCredential {
+                credential = candidateCredential
+            } else if let previousCredential {
+                credential = previousCredential
+            } else {
+                throw ConfigurationInputError.missingCredential
+            }
+
+            let modelIdentifier = resolvedTranscriptionModel
+            guard !modelIdentifier.isEmpty else {
+                throw ConfigurationInputError.missingTranscriptionModel
+            }
+
+            let repair = TranscriptionRepair(
+                provider: .openAI,
+                model: transcriptionModelChoice
+                    == Self.customModelChoice
+                    ? .custom(modelIdentifier)
+                    : .curated(modelIdentifier)
+            )
+
+            try await validator.validateTranscription(
+                credential: credential,
+                model: repair.model.identifier
+            )
+
+            let repairedConfiguration = AppConfiguration(
+                transcriptionProvider: repair.provider,
+                transcriptionModel: repair.model,
+                language: savedConfiguration.language,
+                postProcessingMode:
+                    savedConfiguration.postProcessingMode,
+                postProcessingProvider:
+                    savedConfiguration.postProcessingProvider,
+                postProcessingModel:
+                    savedConfiguration.postProcessingModel
+            )
+
+            if isReplacingCredential {
+                try credentialStore.replaceCredential(with: credential)
+            }
+
+            do {
+                try settingsStore.commit(
+                    configuration: repairedConfiguration,
+                    hasCompletedFirstRun: hasCompletedFirstRun,
+                    soundCuesEnabled: soundCuesEnabled
+                )
+            } catch {
+                if isReplacingCredential {
+                    if let previousCredential {
+                        try? credentialStore.replaceCredential(
+                            with: previousCredential
+                        )
+                    } else {
+                        try? credentialStore.deleteCredential()
+                    }
+                }
+                throw error
+            }
+
+            savedConfiguration = repairedConfiguration
+            credentialExists = true
+            candidateAPIKey = ""
+            apply(repairedConfiguration)
+            successMessage =
+                "Transcription configuration repaired and validated. Retry the retained recording."
+            onConfigurationChanged?()
+            onTranscriptionRepairValidated?(repair)
+        } catch is CancellationError {
+            errorMessage = "Validation was cancelled."
         } catch {
             errorMessage = error.localizedDescription
         }

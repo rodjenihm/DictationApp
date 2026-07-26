@@ -32,12 +32,14 @@ final class ConfigurationWindowController: NSWindowController {
         fatalError("init(coder:) is unavailable")
     }
 
-    func showConfiguration() {
+    func showConfiguration(
+        mode: ConfigurationPresentationMode = .full
+    ) {
         guard let window else {
             return
         }
 
-        viewModel.reload()
+        viewModel.prepareForPresentation(mode)
         showWindow(nil)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)

@@ -288,6 +288,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         ).error
         let code = providerError?.code?.lowercased()
         let type = providerError?.type?.lowercased()
+        let parameter = providerError?.param?.lowercased()
 
         if
             code == "insufficient_quota"
@@ -323,9 +324,12 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             )
         case 400, 409, 422:
             if
-                code == "model_not_found"
-                    || code == "invalid_model"
+                Self.configurationErrorCodes.contains(code ?? "")
                     || type == "invalid_api_key"
+                    || (
+                        type == "invalid_request_error"
+                            && parameter == "model"
+                    )
             {
                 return .configuration(
                     message:
@@ -381,6 +385,15 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             && !value.contains("\r")
             && !value.contains("\n")
     }
+
+    private static let configurationErrorCodes: Set<String> = [
+        "invalid_api_key",
+        "invalid_model",
+        "model_not_available",
+        "model_not_found",
+        "model_not_supported",
+        "unsupported_model",
+    ]
 }
 
 private struct TranscriptionResponse: Decodable {
@@ -393,10 +406,12 @@ private struct OpenAIErrorResponse: Decodable {
     struct ProviderError: Decodable {
         let type: String?
         let code: String?
+        let param: String?
 
         enum CodingKeys: String, CodingKey {
             case type
             case code
+            case param
         }
 
         init(from decoder: any Decoder) throws {
@@ -418,6 +433,11 @@ private struct OpenAIErrorResponse: Decodable {
             } else {
                 code = nil
             }
+
+            param = try container.decodeIfPresent(
+                String.self,
+                forKey: .param
+            )
         }
     }
 }

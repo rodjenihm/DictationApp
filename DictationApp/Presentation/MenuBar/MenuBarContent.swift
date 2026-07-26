@@ -19,7 +19,17 @@ struct MenuBarContent: View {
             }
         }
 
-        if appModel.canDiscardTranscription {
+        if appModel.canTranscribePartial {
+            Button("Transcribe Partial") {
+                appModel.transcribePartial()
+            }
+        }
+
+        if appModel.canDiscardPartial {
+            Button("Discard Partial Recording", role: .destructive) {
+                appModel.discardPartial()
+            }
+        } else if appModel.canDiscardTranscription {
             Button("Discard Recording", role: .destructive) {
                 appModel.discardTranscription()
             }
@@ -29,7 +39,11 @@ struct MenuBarContent: View {
             }
         }
 
-        Button("Open Settings") {
+        Button(
+            appModel.canRepairTranscription
+                ? "Repair Transcription Settings"
+                : "Open Settings"
+        ) {
             appModel.showConfiguration()
         }
 

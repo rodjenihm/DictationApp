@@ -6,6 +6,8 @@ struct OverlayView: View {
     let onCancel: () -> Void
     let onRetry: () -> Void
     let onDiscard: () -> Void
+    let onTranscribePartial: () -> Void
+    let onRepairTranscription: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -34,7 +36,16 @@ struct OverlayView: View {
             }
 
             switch state {
-            case .transcriptionFailed:
+            case .transcriptionFailed(_, let canRepair):
+                if canRepair {
+                    Button(
+                        "Settings",
+                        action: onRepairTranscription
+                    )
+                    .buttonStyle(.bordered)
+                    .focusable(false)
+                }
+
                 Button("Retry", action: onRetry)
                     .buttonStyle(.borderedProminent)
                     .focusable(false)
@@ -43,6 +54,21 @@ struct OverlayView: View {
                     "Discard",
                     role: .destructive,
                     action: onDiscard
+                )
+                .buttonStyle(.bordered)
+                .focusable(false)
+            case .captureFailed:
+                Button(
+                    "Transcribe Partial",
+                    action: onTranscribePartial
+                )
+                .buttonStyle(.borderedProminent)
+                .focusable(false)
+
+                Button(
+                    "Discard",
+                    role: .destructive,
+                    action: onCancel
                 )
                 .buttonStyle(.bordered)
                 .focusable(false)
@@ -56,7 +82,7 @@ struct OverlayView: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-        .frame(width: 500)
+        .frame(width: overlayWidth)
         .background(.regularMaterial, in: Capsule())
         .overlay {
             Capsule()
@@ -85,7 +111,11 @@ struct OverlayView: View {
                 .foregroundStyle(.secondary)
                 .font(.title3)
                 .accessibilityHidden(true)
-        case .tooShort, .failed, .transcriptionFailed:
+        case
+            .tooShort,
+            .failed,
+            .transcriptionFailed,
+            .captureFailed:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .font(.title3)
@@ -127,6 +157,8 @@ struct OverlayView: View {
             "No speech detected"
         case .transcriptionFailed:
             "Transcription failed"
+        case .captureFailed(_, let duration):
+            "Partial recording (\(formatDuration(duration)))"
         case .tooShort:
             "Recording too short"
         case .cancelled:
@@ -152,7 +184,9 @@ struct OverlayView: View {
             "Paste the transcript manually"
         case .noSpeech:
             "The clipboard was left unchanged"
-        case .transcriptionFailed(let message):
+        case .transcriptionFailed(let message, _):
+            message
+        case .captureFailed(let message, _):
             message
         case .tooShort:
             "Record for at least half a second"
@@ -169,10 +203,22 @@ struct OverlayView: View {
             .recording(_, _, true),
             .tooShort,
             .failed,
-            .transcriptionFailed:
+            .transcriptionFailed,
+            .captureFailed:
             .orange
         default:
             .secondary
+        }
+    }
+
+    private var overlayWidth: CGFloat {
+        switch state {
+        case .transcriptionFailed(_, true):
+            640
+        case .captureFailed:
+            600
+        default:
+            500
         }
     }
 

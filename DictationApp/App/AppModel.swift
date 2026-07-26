@@ -9,6 +9,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var canCancel = false
     @Published private(set) var canRetryTranscription = false
     @Published private(set) var canDiscardTranscription = false
+    @Published private(set) var canRepairTranscription = false
+    @Published private(set) var canTranscribePartial = false
+    @Published private(set) var canDiscardPartial = false
 
     private let settingsStore = SettingsStore()
     private let credentialStore = KeychainCredentialStore()
@@ -47,6 +50,9 @@ final class AppModel: ObservableObject {
         viewModel.onConfigurationChanged = { [weak self] in
             self?.refreshStatus()
         }
+        viewModel.onTranscriptionRepairValidated = { [weak self] repair in
+            self?.dictationCoordinator.applyTranscriptionRepair(repair)
+        }
         return viewModel
     }()
 
@@ -65,6 +71,12 @@ final class AppModel: ObservableObject {
         },
         onDiscard: { [weak self] in
             self?.discardTranscription()
+        },
+        onTranscribePartial: { [weak self] in
+            self?.transcribePartial()
+        },
+        onRepairTranscription: { [weak self] in
+            self?.showConfiguration()
         }
     )
 
@@ -111,7 +123,17 @@ final class AppModel: ObservableObject {
     }
 
     func showConfiguration() {
-        configurationWindowController.showConfiguration()
+        let mode: ConfigurationPresentationMode
+        if
+            case .transcriptionFailed(let failure) =
+                dictationCoordinator.state,
+            failure.isConfigurationFailure
+        {
+            mode = .transcriptionRepair
+        } else {
+            mode = .full
+        }
+        configurationWindowController.showConfiguration(mode: mode)
     }
 
     func stop() {
@@ -134,6 +156,7 @@ final class AppModel: ObservableObject {
             .transcribedToClipboard,
             .noSpeech,
             .transcriptionFailed,
+            .captureFailed,
             .tooShort,
             .cancelled,
             .failed:
@@ -151,6 +174,14 @@ final class AppModel: ObservableObject {
 
     func discardTranscription() {
         dictationCoordinator.discardTranscription()
+    }
+
+    func transcribePartial() {
+        dictationCoordinator.transcribePartial()
+    }
+
+    func discardPartial() {
+        dictationCoordinator.discardPartial()
     }
 
     func quit() {
@@ -202,6 +233,9 @@ final class AppModel: ObservableObject {
         canCancel = false
         canRetryTranscription = false
         canDiscardTranscription = false
+        canRepairTranscription = false
+        canTranscribePartial = false
+        canDiscardPartial = false
 
         guard hasCredential && configuration.isStructurallyValid else {
             statusText = "Setup required"
@@ -217,6 +251,9 @@ final class AppModel: ObservableObject {
     private func apply(_ state: DictationSessionState) {
         canRetryTranscription = false
         canDiscardTranscription = false
+        canRepairTranscription = false
+        canTranscribePartial = false
+        canDiscardPartial = false
 
         switch state {
         case .idle:
@@ -297,8 +334,26 @@ final class AppModel: ObservableObject {
             canCancel = true
             canRetryTranscription = true
             canDiscardTranscription = true
+            canRepairTranscription =
+                failure.isConfigurationFailure
             overlayWindowController.present(
-                .transcriptionFailed(message: failure.message)
+                .transcriptionFailed(
+                    message: failure.message,
+                    canRepair: failure.isConfigurationFailure
+                )
+            )
+        case .captureFailed(let failure):
+            statusText = failure.message
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = true
+            canTranscribePartial = true
+            canDiscardPartial = true
+            overlayWindowController.present(
+                .captureFailed(
+                    message: failure.message,
+                    duration: failure.artifact.duration
+                )
             )
         case .tooShort:
             statusText = "Recording too short — discarded"

@@ -5,7 +5,7 @@ struct PreparedRecording: Equatable, Sendable {
     let inputDeviceName: String
 }
 
-enum AudioRecorderError: Error {
+enum AudioRecorderError: Error, Equatable, Sendable {
     case noInputDevice
     case cannotConfigure
     case unsupportedFileType
@@ -14,9 +14,15 @@ enum AudioRecorderError: Error {
     case invalidArtifact
 }
 
+enum UnexpectedCaptureOutcome: Sendable {
+    case partial(AudioArtifact)
+    case failed(AudioRecorderError)
+}
+
 @MainActor
 protocol AudioRecorder: AnyObject {
-    var onUnexpectedCaptureFailure: (() -> Void)? { get set }
+    var onUnexpectedCaptureFailure:
+        ((UnexpectedCaptureOutcome) -> Void)? { get set }
 
     func prepare(profile: RecordingProfile) async throws -> PreparedRecording
     func startPreparedRecording() async throws
@@ -31,7 +37,8 @@ final class AVFoundationAudioRecorder:
     AudioRecorder,
     AVCaptureFileOutputRecordingDelegate
 {
-    var onUnexpectedCaptureFailure: (() -> Void)?
+    var onUnexpectedCaptureFailure:
+        ((UnexpectedCaptureOutcome) -> Void)?
 
     private let fileStore: RecordingFileStore
     private let captureQueue = DispatchQueue(
@@ -70,6 +77,7 @@ final class AVFoundationAudioRecorder:
                 outputURL: outputURL
             )
             context = preparedContext
+            installFailureObservers(for: preparedContext)
             return PreparedRecording(
                 inputDeviceName: preparedContext.inputDeviceName
             )
@@ -131,6 +139,7 @@ final class AVFoundationAudioRecorder:
             _ = try? await finishRecording(context: context)
         } else {
             await stopCaptureSession(context)
+            removeFailureObservers(from: context)
             clearContext(ifMatching: context)
         }
 
@@ -143,6 +152,7 @@ final class AVFoundationAudioRecorder:
         }
 
         self.context = nil
+        removeFailureObservers(from: context)
         startContinuation?.resume(throwing: CancellationError())
         startContinuation = nil
         finishContinuation?.resume(throwing: CancellationError())
@@ -244,6 +254,7 @@ final class AVFoundationAudioRecorder:
                     continuation.resume(
                         returning: CaptureContext(
                             session: session,
+                            device: device,
                             output: output,
                             outputURL: outputURL,
                             inputDeviceName: device.localizedName,
@@ -305,23 +316,121 @@ final class AVFoundationAudioRecorder:
         isExpectedFinish = false
 
         await stopCaptureSession(context)
+        removeFailureObservers(from: context)
         clearContext(ifMatching: context)
 
         if let continuation {
-            if finishedSuccessfully {
-                continuation.resume(returning: outputURL)
-            } else {
-                fileStore.delete(outputURL)
-                continuation.resume(
-                    throwing: AudioRecorderError.cannotFinalize
-                )
+            continuation.resume(returning: outputURL)
+            return
+        }
+
+        if !expectedFinish {
+            await reportUnexpectedCaptureOutcome(
+                at: outputURL,
+                context: context,
+                delegateReportedSuccess: finishedSuccessfully
+            )
+        } else {
+            fileStore.delete(outputURL)
+        }
+    }
+
+    private func installFailureObservers(for context: CaptureContext) {
+        let center = NotificationCenter.default
+
+        context.observerTokens.append(
+            center.addObserver(
+                forName: AVCaptureDevice.wasDisconnectedNotification,
+                object: context.device,
+                queue: nil
+            ) { [weak self, weak context] _ in
+                guard let context else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    self?.handleUnexpectedCaptureSignal(for: context)
+                }
+            }
+        )
+
+        context.observerTokens.append(
+            center.addObserver(
+                forName: AVCaptureSession.runtimeErrorNotification,
+                object: context.session,
+                queue: nil
+            ) { [weak self, weak context] _ in
+                guard let context else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    self?.handleUnexpectedCaptureSignal(for: context)
+                }
+            }
+        )
+    }
+
+    private func removeFailureObservers(from context: CaptureContext) {
+        let center = NotificationCenter.default
+        context.observerTokens.forEach(center.removeObserver)
+        context.observerTokens.removeAll()
+    }
+
+    private func handleUnexpectedCaptureSignal(
+        for candidate: CaptureContext
+    ) {
+        guard
+            context === candidate,
+            !candidate.isHandlingUnexpectedFailure,
+            !isExpectedFinish
+        else {
+            return
+        }
+
+        candidate.isHandlingUnexpectedFailure = true
+
+        if candidate.output.isRecording {
+            captureQueue.async {
+                candidate.output.stopRecording()
             }
             return
         }
 
-        fileStore.delete(outputURL)
-        if !expectedFinish {
-            onUnexpectedCaptureFailure?()
+        startContinuation?.resume(
+            throwing: AudioRecorderError.cannotStart
+        )
+        startContinuation = nil
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await stopCaptureSession(candidate)
+            removeFailureObservers(from: candidate)
+            clearContext(ifMatching: candidate)
+            fileStore.delete(candidate.outputURL)
+        }
+    }
+
+    private func reportUnexpectedCaptureOutcome(
+        at outputURL: URL,
+        context: CaptureContext,
+        delegateReportedSuccess: Bool
+    ) async {
+        do {
+            let artifact = try await validateArtifact(
+                at: outputURL,
+                context: context
+            )
+            onUnexpectedCaptureFailure?(.partial(artifact))
+        } catch {
+            fileStore.delete(outputURL)
+            onUnexpectedCaptureFailure?(
+                .failed(
+                    delegateReportedSuccess
+                        ? .invalidArtifact
+                        : .cannotFinalize
+                )
+            )
         }
     }
 
@@ -355,7 +464,8 @@ final class AVFoundationAudioRecorder:
             guard
                 duration.isFinite,
                 duration > 0,
-                !audioTracks.isEmpty
+                !audioTracks.isEmpty,
+                FileManager.default.isReadableFile(atPath: url.path)
             else {
                 throw AudioRecorderError.invalidArtifact
             }
@@ -363,11 +473,14 @@ final class AVFoundationAudioRecorder:
             let resourceValues = try url.resourceValues(
                 forKeys: [.fileSizeKey]
             )
+            guard let fileSize = resourceValues.fileSize, fileSize > 0 else {
+                throw AudioRecorderError.invalidArtifact
+            }
 
             return AudioArtifact(
                 url: url,
                 duration: duration,
-                fileSize: Int64(resourceValues.fileSize ?? 0),
+                fileSize: Int64(fileSize),
                 inputDeviceName: context.inputDeviceName
             )
         } catch let error as AudioRecorderError {
@@ -393,19 +506,24 @@ final class AVFoundationAudioRecorder:
 
 private final class CaptureContext: @unchecked Sendable {
     let session: AVCaptureSession
+    let device: AVCaptureDevice
     let output: AVCaptureAudioFileOutput
     let outputURL: URL
     let inputDeviceName: String
     let profile: RecordingProfile
+    var observerTokens: [NSObjectProtocol] = []
+    var isHandlingUnexpectedFailure = false
 
     init(
         session: AVCaptureSession,
+        device: AVCaptureDevice,
         output: AVCaptureAudioFileOutput,
         outputURL: URL,
         inputDeviceName: String,
         profile: RecordingProfile
     ) {
         self.session = session
+        self.device = device
         self.output = output
         self.outputURL = outputURL
         self.inputDeviceName = inputDeviceName

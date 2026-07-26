@@ -15,8 +15,8 @@ This file is the durable handoff record between implementation sessions.
 | 4. Local capture, explicit session state, and sound cues | Complete | Signed Debug and Release builds, live menu/shortcut capture, finalized AAC metadata, duration controls, cue playback/toggle persistence, short/cancel/quit cleanup, and idle recovery verified |
 | 5. Non-activating overlay and cancellation-safe cleanup | Complete | Signed Debug and Release builds, non-activating two-display overlay behavior, menu/overlay/Escape cancellation, Escape conflict rollback/non-propagation, immediate cross-state cleanup, and startup orphan removal verified |
 | 6. Provider-neutral completed-file OpenAI transcription | Complete | Signed Debug and Release builds, provider/retry and coordinator harnesses, both live curated models, Automatic/explicit language, clipboard/no-speech behavior, retained Retry/Discard, cancellation, and cleanup verified |
-| 7. Recoverable capture failures and configuration repair | Next | — |
-| 8. Independent optional OpenAI post-processing and raw fallback | Pending | — |
+| 7. Recoverable capture failures and configuration repair | Complete | Signed Debug and Release builds, recoverable-partial state/cleanup harness, transactional repair harness, permanent-provider classification harness, and retained-snapshot invariants verified |
+| 8. Independent optional OpenAI post-processing and raw fallback | Next | — |
 | 9. Clipboard preservation and Accessibility insertion | Pending | — |
 | 10. Cross-stage cancellation and state-machine hardening | Pending | — |
 | 11. Final v1 integration and polish | Pending | — |
@@ -215,6 +215,35 @@ Verified:
 - The active pipeline contains no post-processing or Accessibility insertion call and no logging of credentials, authorization headers, request bodies, provider bodies, audio, or transcripts.
 - Temporary harness sources and executables were removed; repository checks found no Derived Data, build directories, result bundles, credential-like API-key values, or other verification artifacts.
 
+### Slice 7 — Recoverable capture failures and configuration repair
+
+Implemented:
+
+- Added active-input disconnection and capture-session runtime-error observation, while retaining the recording delegate as a second unexpected-termination signal.
+- Serialized unexpected finalization, removed observers on every teardown path, and emitted at most one validated partial outcome.
+- Validated partial M4A duration, audio-track presence, readability, and nonzero file size before transferring artifact ownership to the coordinator.
+- Added a single retained failed-session context containing the original immutable session snapshot, artifact, cue preference, and an optional validated transcription repair.
+- Added a recoverable capture-failure state with explicit Transcribe Partial and Discard actions in the menu and non-activating overlay; partial audio is never uploaded automatically.
+- Deleted short, invalid, stale, duplicate, discarded, cancelled, and quit-time partial artifacts while continuing to block new recording until a valid retained partial or transcription failure is resolved.
+- Expanded provider-neutral permanent transcription failure handling and OpenAI invalid-credential/unavailable-or-incompatible-model classification.
+- Added a restricted repair Settings presentation containing only credential replacement and transcription provider/model controls.
+- Made repair validation transactional: failed validation preserves the saved credential and configuration, while successful validation records a provider/model override for the retained session.
+- Kept the retained session's original language, recording profile, and post-processing snapshot immutable; Retry resolves the credential freshly and applies only the validated transcription provider/model repair.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- A temporary coordinator harness verified valid-partial retention, no automatic provider call, blocked new recording, explicit partial transcription, duplicate/stale callback cleanup, short/invalid partial errors, Discard, successful deletion, and quit cleanup.
+- The coordinator harness also verified that repaired Retry reused the retained artifact, changed only the transcription model, preserved the original explicit language and non-transcription session fields, and deleted the artifact after success.
+- A temporary configuration harness verified always-on repair validation, transactional invalid-key failure, successful credential/model replacement, callback delivery, and preservation of language, post-processing, sound-cue, and first-run settings.
+- A temporary provider harness verified that invalid credentials and unavailable/incompatible models are non-retryable configuration failures, while quota exhaustion remains non-retryable but outside the repair classification.
+- Temporary harness sources, executables, module caches, signed build products, and logs were removed; repository checks found no Derived Data, build directories, result bundles, credential-like API-key values, or verification artifacts.
+
+Manual verification limitation:
+
+- A physical active-input disconnect was not performed on the user's current audio hardware. The notification/delegate recovery paths compile and their outcome handling is harness-verified; repeat the real hardware disconnect check during final Slice 11 integration.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -227,4 +256,4 @@ Verified:
 
 ## Next action
 
-Implement **Slice 7 — Recoverable capture failures and configuration repair**.
+Implement **Slice 8 — Independent optional OpenAI post-processing and raw fallback**.

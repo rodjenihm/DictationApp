@@ -12,12 +12,16 @@ struct ConfigurationView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    permissionsSection
-                    shortcutSection
-                    feedbackSection
+                    if viewModel.presentationMode == .full {
+                        permissionsSection
+                        shortcutSection
+                        feedbackSection
+                    }
                     credentialSection
                     transcriptionSection
-                    postProcessingSection
+                    if viewModel.presentationMode == .full {
+                        postProcessingSection
+                    }
                     resultMessage
                 }
                 .padding(24)
@@ -53,14 +57,12 @@ struct ConfigurationView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(
-                    viewModel.isFirstRun
-                        ? "Set up DictationApp"
-                        : "DictationApp Settings"
+                    headerTitle
                 )
                 .font(.title2.weight(.semibold))
 
                 Text(
-                    "Configure cloud transcription and optional transcript cleanup."
+                    headerDetail
                 )
                 .foregroundStyle(.secondary)
             }
@@ -234,7 +236,10 @@ struct ConfigurationView: View {
 
                 Spacer()
 
-                if viewModel.credentialExists {
+                if
+                    viewModel.credentialExists
+                        && viewModel.presentationMode == .full
+                {
                     Button("Delete", role: .destructive) {
                         isConfirmingCredentialDeletion = true
                     }
@@ -279,23 +284,29 @@ struct ConfigurationView: View {
                 .disabled(viewModel.isValidating)
             }
 
-            LabeledContent("Language") {
-                Picker("Language", selection: $viewModel.languageCode) {
-                    Text("Automatic").tag("")
-                    Divider()
-                    ForEach(OpenAIModelCatalog.languages) { language in
-                        Text(language.displayName).tag(language.id)
+            if viewModel.presentationMode == .full {
+                LabeledContent("Language") {
+                    Picker("Language", selection: $viewModel.languageCode) {
+                        Text("Automatic").tag("")
+                        Divider()
+                        ForEach(OpenAIModelCatalog.languages) { language in
+                            Text(language.displayName).tag(language.id)
+                        }
                     }
+                    .labelsHidden()
+                    .frame(maxWidth: 300)
+                    .disabled(viewModel.isValidating)
                 }
-                .labelsHidden()
-                .frame(maxWidth: 300)
-                .disabled(viewModel.isValidating)
             }
 
             uploadNotice(
-                "Saving a new key or custom transcription model uploads a " +
-                    "bundled 0.75-second silent M4A file to OpenAI. Future " +
-                    "dictation audio will be uploaded only after recording stops."
+                viewModel.presentationMode == .transcriptionRepair
+                    ? "Validation uploads only the bundled 0.75-second silent " +
+                        "M4A file to OpenAI. The retained recording is not " +
+                        "uploaded until you explicitly retry."
+                    : "Saving a new key or custom transcription model uploads a " +
+                        "bundled 0.75-second silent M4A file to OpenAI. Future " +
+                        "dictation audio will be uploaded only after recording stops."
             )
         }
     }
@@ -376,7 +387,7 @@ struct ConfigurationView: View {
     private var footer: some View {
         HStack {
             Label(
-                "Opening Settings never requests permissions; Enable actions are explicit.",
+                footerDetail,
                 systemImage: "lock.shield"
             )
             .font(.caption)
@@ -400,6 +411,35 @@ struct ConfigurationView: View {
             }
         }
         .padding(20)
+    }
+
+    private var headerTitle: String {
+        switch viewModel.presentationMode {
+        case .full:
+            viewModel.isFirstRun
+                ? "Set up DictationApp"
+                : "DictationApp Settings"
+        case .transcriptionRepair:
+            "Repair Transcription"
+        }
+    }
+
+    private var headerDetail: String {
+        switch viewModel.presentationMode {
+        case .full:
+            "Configure cloud transcription and optional transcript cleanup."
+        case .transcriptionRepair:
+            "Validate an API key and transcription model for the retained recording."
+        }
+    }
+
+    private var footerDetail: String {
+        switch viewModel.presentationMode {
+        case .full:
+            "Opening Settings never requests permissions; Enable actions are explicit."
+        case .transcriptionRepair:
+            "Language, recording, and post-processing settings remain fixed for this session."
+        }
     }
 
     private func settingsGroup<Content: View>(

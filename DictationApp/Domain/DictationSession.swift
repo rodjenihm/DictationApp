@@ -41,6 +41,43 @@ struct SessionConfiguration: Equatable, Sendable {
         postProcessingModel = configuration.postProcessingModel
         self.recordingProfile = recordingProfile
     }
+
+    func replacingTranscription(
+        with repair: TranscriptionRepair
+    ) -> SessionConfiguration {
+        SessionConfiguration(
+            transcriptionProvider: repair.provider,
+            transcriptionModel: repair.model,
+            language: language,
+            postProcessingMode: postProcessingMode,
+            postProcessingProvider: postProcessingProvider,
+            postProcessingModel: postProcessingModel,
+            recordingProfile: recordingProfile
+        )
+    }
+
+    private init(
+        transcriptionProvider: ProviderID,
+        transcriptionModel: ModelSelection,
+        language: LanguageSelection,
+        postProcessingMode: PostProcessingMode,
+        postProcessingProvider: ProviderID,
+        postProcessingModel: ModelSelection,
+        recordingProfile: RecordingProfile
+    ) {
+        self.transcriptionProvider = transcriptionProvider
+        self.transcriptionModel = transcriptionModel
+        self.language = language
+        self.postProcessingMode = postProcessingMode
+        self.postProcessingProvider = postProcessingProvider
+        self.postProcessingModel = postProcessingModel
+        self.recordingProfile = recordingProfile
+    }
+}
+
+struct TranscriptionRepair: Equatable, Sendable {
+    let provider: ProviderID
+    let model: ModelSelection
 }
 
 struct AudioArtifact: Equatable, Sendable {
@@ -71,6 +108,7 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
     case cannotStartCapture
     case cannotFinalizeRecording
     case invalidRecording
+    case partialRecordingTooShort
 
     var errorDescription: String? {
         switch self {
@@ -88,6 +126,8 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
             "The recording could not be finalized."
         case .invalidRecording:
             "The finalized recording did not contain valid audio."
+        case .partialRecordingTooShort:
+            "The microphone became unavailable before a usable partial recording was captured."
         }
     }
 }
@@ -95,6 +135,11 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
 struct TranscriptionFailureState: Equatable, Sendable {
     let message: String
     let isConfigurationFailure: Bool
+}
+
+struct RecoverableCaptureFailureState: Equatable, Sendable {
+    let message: String
+    let artifact: AudioArtifact
 }
 
 enum DictationSessionState: Equatable, Sendable {
@@ -107,6 +152,7 @@ enum DictationSessionState: Equatable, Sendable {
     case transcribedToClipboard
     case noSpeech
     case transcriptionFailed(TranscriptionFailureState)
+    case captureFailed(RecoverableCaptureFailureState)
     case tooShort
     case cancelled
     case failed(DictationCaptureError)

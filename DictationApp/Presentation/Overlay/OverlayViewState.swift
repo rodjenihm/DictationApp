@@ -12,7 +12,8 @@ enum OverlayViewState: Equatable {
     case transcribing(providerName: String)
     case transcribedToClipboard
     case noSpeech
-    case transcriptionFailed(message: String)
+    case transcriptionFailed(message: String, canRepair: Bool)
+    case captureFailed(message: String, duration: TimeInterval)
     case tooShort
     case cancelled
     case failed(message: String)
