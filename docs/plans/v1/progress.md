@@ -12,8 +12,8 @@ This file is the durable handoff record between implementation sessions.
 | 1. Menu-bar utility shell | Complete | Debug and Release builds passed; signed bundle metadata, entitlements, architecture, activation policy, setup-window presence, process persistence, and clean termination verified |
 | 2. First-run configuration, preferences, and credentials | Complete | Signed Debug and Release builds, bundled fixture metadata, live OpenAI validation, transactional failure paths, Keychain CRUD, persistence, relaunch, and derived status verified |
 | 3. Permission flows and configurable global shortcut | Complete | Signed Debug and Release builds, permission isolation/status refresh, System Settings routing, exclusive shortcut activation, conflict rollback, persistence, and reset verified |
-| 4. Local capture, explicit session state, and sound cues | Next | — |
-| 5. Non-activating overlay and cancellation-safe cleanup | Pending | — |
+| 4. Local capture, explicit session state, and sound cues | Complete | Signed Debug and Release builds, live menu/shortcut capture, finalized AAC metadata, duration controls, cue playback/toggle persistence, short/cancel/quit cleanup, and idle recovery verified |
+| 5. Non-activating overlay and cancellation-safe cleanup | Next | — |
 | 6. Provider-neutral completed-file OpenAI transcription | Pending | — |
 | 7. Recoverable capture failures and configuration repair | Pending | — |
 | 8. Independent optional OpenAI post-processing and raw fallback | Pending | — |
@@ -131,6 +131,35 @@ Manual verification limitation:
 
 - Screen capture remained unavailable on the host, so window, control, prompt, and menu state were verified through the macOS Accessibility hierarchy instead of screenshots.
 
+### Slice 4 — Local capture, explicit session state, and sound cues
+
+Implemented:
+
+- Added immutable session configuration, recording profile, audio artifact, recording metadata, capture error, and explicit session-state domain types.
+- Added a main-actor dictation coordinator owning preparing, recording, finalizing, completion, short-recording, cancellation, failure, and idle transitions.
+- Added just-in-time Microphone authorization, per-session default-input resolution, monotonic elapsed-time updates, a 9:30 warning, and a 10:00 automatic stop.
+- Added `AVCaptureSession`/`AVCaptureAudioFileOutput` local capture on a dedicated serial queue with M4A/AAC, mono, 16 kHz, and a constant 64 kbps encoder target.
+- Added delegate-awaited finalization, `AVURLAsset` duration/audio-track validation, and app-cache artifact creation/deletion.
+- Added four distinct macOS system sound cues with completion-aware playback so the start cue finishes before file capture and all other cues follow capture shutdown.
+- Added a persisted all-cues toggle that defaults to enabled.
+- Replaced the intermediate disabled menu action with shared menu/shortcut Start and Stop behavior, active-session Cancel, elapsed time, input-device name, warning, finalization, completion, and failure statuses.
+- Added best-effort synchronous recording shutdown and deletion during application termination.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- Option–Space and menu actions started/stopped the same real recording flow while another application was active.
+- The recording menu showed monotonic elapsed time and the current default input, `Danijel’s AirPods Pro 3`; subsequent sessions resolved the input again.
+- Rapid shortcut presses during preparing and finalizing were ignored while the active recording completed normally.
+- A finalized capture inspected with `afinfo` was M4A/AAC, mono, 16 kHz, with a configured constant 64 kbps target; quiet AirPods captures reported an approximately 48 kbps encoded payload.
+- Valid captures were available during the 1.2-second acknowledgement and then deleted; sub-500 ms, cancelled, failed-quit-check, and active-quit captures left no app-cache recording.
+- Temporarily shortened one-second/three-second thresholds exposed the non-blocking warning and automatic stop; production values were restored to 9:30/10:00 before the final builds.
+- The mapped macOS system sounds (`Tink`, `Pop`, `Funk`, and `Basso`) resolved and played through the current macOS output route. The Settings toggle persisted disabled and enabled states and was restored to enabled.
+- The existing configuration, first-run marker, Keychain credential, Option–Space shortcut, and permission grants remained intact.
+- The recording path contains no provider call, and no OpenAI request was made.
+- Repository checks found no Derived Data, build directories, result bundles, or credential-like API-key values.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -143,4 +172,4 @@ Manual verification limitation:
 
 ## Next action
 
-Implement **Slice 4 — Local capture, explicit session state, and sound cues**.
+Implement **Slice 5 — Non-activating overlay and cancellation-safe cleanup**.

@@ -14,6 +14,7 @@ struct ConfigurationView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     permissionsSection
                     shortcutSection
+                    feedbackSection
                     credentialSection
                     transcriptionSection
                     postProcessingSection
@@ -177,6 +178,25 @@ struct ConfigurationView: View {
                     .font(.callout)
                     .foregroundStyle(.green)
             }
+        }
+    }
+
+    private var feedbackSection: some View {
+        settingsGroup("Feedback", systemImage: "speaker.wave.2") {
+            Toggle(
+                "Play sound cues",
+                isOn: $viewModel.soundCuesEnabled
+            )
+            .disabled(viewModel.isValidating)
+
+            Text(
+                "Plays distinct cues when recording starts, stops, is " +
+                    "cancelled, or requires attention. Sounds use the current " +
+                    "macOS output device and volume."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 

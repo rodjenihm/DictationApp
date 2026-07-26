@@ -12,6 +12,7 @@ final class ConfigurationViewModel: ObservableObject {
     @Published var postProcessingEnabled = false
     @Published var postProcessingModelChoice = ""
     @Published var postProcessingCustomModel = ""
+    @Published var soundCuesEnabled = true
 
     @Published private(set) var microphoneStatus:
         MicrophonePermissionStatus = .notDetermined
@@ -85,6 +86,7 @@ final class ConfigurationViewModel: ObservableObject {
         savedConfiguration = stored.configuration
         hasCompletedFirstRun = stored.hasCompletedFirstRun
         globalShortcut = stored.globalShortcut
+        soundCuesEnabled = stored.soundCuesEnabled
         apply(stored.configuration)
         candidateAPIKey = ""
         successMessage = nil
@@ -225,7 +227,8 @@ final class ConfigurationViewModel: ObservableObject {
 
             try settingsStore.commit(
                 configuration: configuration,
-                hasCompletedFirstRun: true
+                hasCompletedFirstRun: true,
+                soundCuesEnabled: soundCuesEnabled
             )
 
             savedConfiguration = configuration

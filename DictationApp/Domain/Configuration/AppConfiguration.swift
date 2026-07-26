@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProviderID: String, Codable, CaseIterable, Identifiable {
+enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
     case openAI
 
     var id: String { rawValue }
@@ -13,7 +13,7 @@ enum ProviderID: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum ModelSelection: Codable, Equatable {
+enum ModelSelection: Codable, Equatable, Sendable {
     case curated(String)
     case custom(String)
 
@@ -41,7 +41,7 @@ enum ModelSelection: Codable, Equatable {
     }
 }
 
-enum LanguageSelection: Codable, Equatable {
+enum LanguageSelection: Codable, Equatable, Sendable {
     case automatic
     case explicit(String)
 
@@ -55,14 +55,20 @@ enum LanguageSelection: Codable, Equatable {
     }
 }
 
-enum PostProcessingMode: String, Codable, CaseIterable, Identifiable {
+enum PostProcessingMode:
+    String,
+    Codable,
+    CaseIterable,
+    Identifiable,
+    Sendable
+{
     case disabled
     case enabled
 
     var id: String { rawValue }
 }
 
-struct AppConfiguration: Codable, Equatable {
+struct AppConfiguration: Codable, Equatable, Sendable {
     var transcriptionProvider: ProviderID
     var transcriptionModel: ModelSelection
     var language: LanguageSelection

@@ -8,8 +8,16 @@ struct MenuBarContent: View {
 
         Divider()
 
-        Button("Start Dictation") {}
-            .disabled(true)
+        Button(appModel.primaryActionTitle) {
+            appModel.performPrimaryAction()
+        }
+        .disabled(!appModel.isPrimaryActionEnabled)
+
+        if appModel.canCancel {
+            Button("Cancel Dictation") {
+                appModel.cancelDictation()
+            }
+        }
 
         Button("Open Settings") {
             appModel.showConfiguration()

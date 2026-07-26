@@ -4,6 +4,7 @@ struct StoredSettings {
     var configuration: AppConfiguration
     var hasCompletedFirstRun: Bool
     var globalShortcut: GlobalShortcut
+    var soundCuesEnabled: Bool
 }
 
 @MainActor
@@ -12,6 +13,7 @@ final class SettingsStore {
         static let configuration = "v1.configuration"
         static let hasCompletedFirstRun = "v1.hasCompletedFirstRun"
         static let globalShortcut = "v1.globalShortcut"
+        static let soundCuesEnabled = "v1.soundCuesEnabled"
     }
 
     private let defaults: UserDefaults
@@ -39,19 +41,25 @@ final class SettingsStore {
             hasCompletedFirstRun: defaults.bool(
                 forKey: Key.hasCompletedFirstRun
             ),
-            globalShortcut: loadGlobalShortcut()
+            globalShortcut: loadGlobalShortcut(),
+            soundCuesEnabled: loadSoundCuesEnabled()
         )
     }
 
     func commit(
         configuration: AppConfiguration,
-        hasCompletedFirstRun: Bool
+        hasCompletedFirstRun: Bool,
+        soundCuesEnabled: Bool
     ) throws {
         let data = try encoder.encode(configuration)
         defaults.set(data, forKey: Key.configuration)
         defaults.set(
             hasCompletedFirstRun,
             forKey: Key.hasCompletedFirstRun
+        )
+        defaults.set(
+            soundCuesEnabled,
+            forKey: Key.soundCuesEnabled
         )
     }
 
@@ -70,5 +78,13 @@ final class SettingsStore {
         }
 
         return shortcut
+    }
+
+    private func loadSoundCuesEnabled() -> Bool {
+        guard defaults.object(forKey: Key.soundCuesEnabled) != nil else {
+            return true
+        }
+
+        return defaults.bool(forKey: Key.soundCuesEnabled)
     }
 }
