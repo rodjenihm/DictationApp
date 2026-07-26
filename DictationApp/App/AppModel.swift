@@ -7,6 +7,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var primaryActionTitle = "Start Dictation"
     @Published private(set) var isPrimaryActionEnabled = true
     @Published private(set) var canCancel = false
+    @Published private(set) var canRetryTranscription = false
+    @Published private(set) var canDiscardTranscription = false
 
     private let settingsStore = SettingsStore()
     private let credentialStore = KeychainCredentialStore()
@@ -21,11 +23,17 @@ final class AppModel: ObservableObject {
         fileStore: recordingFileStore
     )
 
+    private lazy var transcriptionProvider = OpenAITranscriptionProvider(
+        credentialStore: credentialStore
+    )
+
     private lazy var dictationCoordinator = DictationCoordinator(
         recorder: audioRecorder,
         soundCuePlayer: SoundCuePlayer(),
         permissionService: permissionService,
-        fileStore: recordingFileStore
+        fileStore: recordingFileStore,
+        transcriptionProvider: transcriptionProvider,
+        clipboardWriter: PasteboardTranscriptWriter()
     )
 
     private lazy var configurationViewModel: ConfigurationViewModel = {
@@ -51,6 +59,12 @@ final class AppModel: ObservableObject {
         },
         onCancel: { [weak self] in
             self?.cancelDictation()
+        },
+        onRetry: { [weak self] in
+            self?.retryTranscription()
+        },
+        onDiscard: { [weak self] in
+            self?.discardTranscription()
         }
     )
 
@@ -116,6 +130,10 @@ final class AppModel: ObservableObject {
             .preparing,
             .finalizing,
             .completed,
+            .transcribing,
+            .transcribedToClipboard,
+            .noSpeech,
+            .transcriptionFailed,
             .tooShort,
             .cancelled,
             .failed:
@@ -125,6 +143,14 @@ final class AppModel: ObservableObject {
 
     func cancelDictation() {
         dictationCoordinator.cancel()
+    }
+
+    func retryTranscription() {
+        dictationCoordinator.retryTranscription()
+    }
+
+    func discardTranscription() {
+        dictationCoordinator.discardTranscription()
     }
 
     func quit() {
@@ -174,6 +200,8 @@ final class AppModel: ObservableObject {
         primaryActionTitle = "Start Dictation"
         isPrimaryActionEnabled = true
         canCancel = false
+        canRetryTranscription = false
+        canDiscardTranscription = false
 
         guard hasCredential && configuration.isStructurallyValid else {
             statusText = "Setup required"
@@ -187,6 +215,9 @@ final class AppModel: ObservableObject {
     }
 
     private func apply(_ state: DictationSessionState) {
+        canRetryTranscription = false
+        canDiscardTranscription = false
+
         switch state {
         case .idle:
             shortcutService.unregisterSessionCancellationShortcut()
@@ -235,6 +266,39 @@ final class AppModel: ObservableObject {
             canCancel = true
             overlayWindowController.present(
                 .completed(duration: artifact.duration)
+            )
+        case .transcribing(let provider):
+            statusText =
+                "Uploading completed audio to \(provider.displayName)…"
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = true
+            overlayWindowController.present(
+                .transcribing(providerName: provider.displayName)
+            )
+        case .transcribedToClipboard:
+            shortcutService.unregisterSessionCancellationShortcut()
+            statusText = "Transcript copied — paste manually"
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = false
+            overlayWindowController.present(.transcribedToClipboard)
+        case .noSpeech:
+            shortcutService.unregisterSessionCancellationShortcut()
+            statusText = "No speech detected"
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = false
+            overlayWindowController.present(.noSpeech)
+        case .transcriptionFailed(let failure):
+            statusText = failure.message
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = true
+            canRetryTranscription = true
+            canDiscardTranscription = true
+            overlayWindowController.present(
+                .transcriptionFailed(message: failure.message)
             )
         case .tooShort:
             statusText = "Recording too short — discarded"

@@ -115,4 +115,26 @@ enum OpenAIModelCatalog {
     static func isCuratedPostProcessingModel(_ identifier: String) -> Bool {
         postProcessingModels.contains { $0.id == identifier }
     }
+
+    static func transcriptionAPIIdentifier(
+        for selection: ModelSelection
+    ) -> String? {
+        switch selection.normalized {
+        case .curated(let identifier):
+            transcriptionModels.first { $0.id == identifier }?.id
+        case .custom(let identifier):
+            identifier.isEmpty ? nil : identifier
+        }
+    }
+
+    static func transcriptionLanguageAPIIdentifier(
+        for selection: LanguageSelection
+    ) -> String? {
+        switch selection {
+        case .automatic:
+            nil
+        case .explicit(let identifier):
+            languages.first { $0.id == identifier }?.id
+        }
+    }
 }

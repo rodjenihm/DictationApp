@@ -5,6 +5,8 @@ import SwiftUI
 final class OverlayWindowController {
     private let onStop: () -> Void
     private let onCancel: () -> Void
+    private let onRetry: () -> Void
+    private let onDiscard: () -> Void
 
     private var panel: OverlayPanel?
     private var hostingController: NSHostingController<OverlayView>?
@@ -12,10 +14,14 @@ final class OverlayWindowController {
 
     init(
         onStop: @escaping () -> Void,
-        onCancel: @escaping () -> Void
+        onCancel: @escaping () -> Void,
+        onRetry: @escaping () -> Void,
+        onDiscard: @escaping () -> Void
     ) {
         self.onStop = onStop
         self.onCancel = onCancel
+        self.onRetry = onRetry
+        self.onDiscard = onDiscard
     }
 
     func present(_ state: OverlayViewState) {
@@ -26,7 +32,9 @@ final class OverlayWindowController {
         let view = OverlayView(
             state: state,
             onStop: onStop,
-            onCancel: onCancel
+            onCancel: onCancel,
+            onRetry: onRetry,
+            onDiscard: onDiscard
         )
 
         if let hostingController {

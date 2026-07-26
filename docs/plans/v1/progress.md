@@ -14,8 +14,8 @@ This file is the durable handoff record between implementation sessions.
 | 3. Permission flows and configurable global shortcut | Complete | Signed Debug and Release builds, permission isolation/status refresh, System Settings routing, exclusive shortcut activation, conflict rollback, persistence, and reset verified |
 | 4. Local capture, explicit session state, and sound cues | Complete | Signed Debug and Release builds, live menu/shortcut capture, finalized AAC metadata, duration controls, cue playback/toggle persistence, short/cancel/quit cleanup, and idle recovery verified |
 | 5. Non-activating overlay and cancellation-safe cleanup | Complete | Signed Debug and Release builds, non-activating two-display overlay behavior, menu/overlay/Escape cancellation, Escape conflict rollback/non-propagation, immediate cross-state cleanup, and startup orphan removal verified |
-| 6. Provider-neutral completed-file OpenAI transcription | Next | — |
-| 7. Recoverable capture failures and configuration repair | Pending | — |
+| 6. Provider-neutral completed-file OpenAI transcription | Complete | Signed Debug and Release builds, provider/retry and coordinator harnesses, both live curated models, Automatic/explicit language, clipboard/no-speech behavior, retained Retry/Discard, cancellation, and cleanup verified |
+| 7. Recoverable capture failures and configuration repair | Next | — |
 | 8. Independent optional OpenAI post-processing and raw fallback | Pending | — |
 | 9. Clipboard preservation and Accessibility insertion | Pending | — |
 | 10. Cross-stage cancellation and state-machine hardening | Pending | — |
@@ -189,6 +189,32 @@ Verified:
 - The recording/overlay path contains no provider invocation, and no OpenAI request was made.
 - Repository checks found no Derived Data, build directories, result bundles, temporary probe files, or credential-like API-key values.
 
+### Slice 6 — Provider-neutral completed-file OpenAI transcription
+
+Implemented:
+
+- Added a provider-neutral transcription request/protocol and failure classification for cancellation, transient, configuration, and non-retryable operation failures.
+- Added a reusable three-attempt retry executor with cancellation-aware sleeps, seconds and HTTP-date `Retry-After` support, full-jitter exponential fallback, an eight-second fallback-delay cap, and a thirty-second cumulative-wait cap.
+- Added an OpenAI completed-file transcription adapter with per-operation Keychain credential resolution, centralized curated/custom model and language mapping, readable-M4A and sub-25-MiB validation, in-memory multipart requests, a 120-second timeout, JSON text decoding, provider-private error parsing, and `URLSessionTask` cancellation.
+- Enabled OpenAI automatic chunking so completed recordings are loudness-normalized and passed through server voice activity detection before transcription, preventing near-silent captures from being forced into hallucinated text.
+- Expanded the coordinator with uploading/transcribing, clipboard success, no-speech, and retained transcription-failure states while preserving the immutable session snapshot and session-generation guards.
+- Deleted audio immediately after successful transcription, trimmed only surrounding whitespace, copied non-empty raw text to the clipboard, and left the clipboard unchanged for empty or whitespace-only output.
+- Retained one failed artifact and blocked new recordings until explicit Retry, Discard, Cancel/Escape, or quit; each explicit Retry starts a fresh logical provider operation and resolves the credential again.
+- Added non-activating overlay and menu progress plus Retry/Discard actions, with Discard equivalent to cancellation and terminal success/no-speech acknowledgements releasing Escape.
+- Kept post-processing and Accessibility insertion out of this slice.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- A temporary provider harness verified Automatic-language omission, explicit Serbian mapping, both curated API model identifiers, three-attempt 5xx and timeout handling, seconds and HTTP-date `Retry-After`, one/two-second exponential bounds, the thirty-second cumulative wait cap, quota non-retry, malformed-response non-retry, cancellation, and pre-request upload-size rejection.
+- A temporary coordinator harness verified that no provider request occurs before Stop; exhausted failure retains audio and blocks Start; explicit Retry reuses the artifact and deletes it on success; whitespace output leaves the clipboard untouched; cancellation prevents stale state/clipboard writes; and Discard removes retained audio.
+- Live signed-app recordings successfully transcribed with `gpt-4o-transcribe` plus Automatic language and `gpt-4o-mini-transcribe` plus an explicit Serbian hint. Each replaced a clipboard marker with provider output, returned to idle, and left no recording file.
+- Follow-up silence handling was corrected after live near-silent recordings produced spurious multilingual text; the multipart request now explicitly selects OpenAI automatic VAD chunking. A three-second live silent capture then preserved a known clipboard marker, returned through the no-speech success path, and left no recording artifact.
+- The original `gpt-4o-transcribe`/Automatic configuration, enabled post-processing preference, Keychain credential, shortcut, permissions, and sound-cue preference were restored after verification.
+- The active pipeline contains no post-processing or Accessibility insertion call and no logging of credentials, authorization headers, request bodies, provider bodies, audio, or transcripts.
+- Temporary harness sources and executables were removed; repository checks found no Derived Data, build directories, result bundles, credential-like API-key values, or other verification artifacts.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -201,4 +227,4 @@ Verified:
 
 ## Next action
 
-Implement **Slice 6 — Provider-neutral completed-file OpenAI transcription**.
+Implement **Slice 7 — Recoverable capture failures and configuration repair**.

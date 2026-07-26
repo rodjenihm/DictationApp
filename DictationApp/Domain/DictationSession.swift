@@ -92,12 +92,21 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
     }
 }
 
+struct TranscriptionFailureState: Equatable, Sendable {
+    let message: String
+    let isConfigurationFailure: Bool
+}
+
 enum DictationSessionState: Equatable, Sendable {
     case idle
     case preparing(SessionConfiguration)
     case recording(RecordingSessionState)
     case finalizing(RecordingFinalizationReason)
     case completed(AudioArtifact)
+    case transcribing(ProviderID)
+    case transcribedToClipboard
+    case noSpeech
+    case transcriptionFailed(TranscriptionFailureState)
     case tooShort
     case cancelled
     case failed(DictationCaptureError)

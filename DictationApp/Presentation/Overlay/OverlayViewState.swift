@@ -9,6 +9,10 @@ enum OverlayViewState: Equatable {
     )
     case finalizing(RecordingFinalizationReason)
     case completed(duration: TimeInterval)
+    case transcribing(providerName: String)
+    case transcribedToClipboard
+    case noSpeech
+    case transcriptionFailed(message: String)
     case tooShort
     case cancelled
     case failed(message: String)

@@ -20,7 +20,13 @@ enum PermissionSettingsPane {
 }
 
 @MainActor
-final class PermissionService {
+protocol MicrophonePermissionServicing {
+    func microphoneStatus() -> MicrophonePermissionStatus
+    func requestMicrophoneAccess() async -> MicrophonePermissionStatus
+}
+
+@MainActor
+final class PermissionService: MicrophonePermissionServicing {
     func microphoneStatus() -> MicrophonePermissionStatus {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .notDetermined:

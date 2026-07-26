@@ -13,7 +13,17 @@ struct MenuBarContent: View {
         }
         .disabled(!appModel.isPrimaryActionEnabled)
 
-        if appModel.canCancel {
+        if appModel.canRetryTranscription {
+            Button("Retry Transcription") {
+                appModel.retryTranscription()
+            }
+        }
+
+        if appModel.canDiscardTranscription {
+            Button("Discard Recording", role: .destructive) {
+                appModel.discardTranscription()
+            }
+        } else if appModel.canCancel {
             Button("Cancel Dictation") {
                 appModel.cancelDictation()
             }

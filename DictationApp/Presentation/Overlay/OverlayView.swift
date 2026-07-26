@@ -4,6 +4,8 @@ struct OverlayView: View {
     let state: OverlayViewState
     let onStop: () -> Void
     let onCancel: () -> Void
+    let onRetry: () -> Void
+    let onDiscard: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -31,9 +33,26 @@ struct OverlayView: View {
                     .focusable(false)
             }
 
-            Button("Cancel", role: .cancel, action: onCancel)
+            switch state {
+            case .transcriptionFailed:
+                Button("Retry", action: onRetry)
+                    .buttonStyle(.borderedProminent)
+                    .focusable(false)
+
+                Button(
+                    "Discard",
+                    role: .destructive,
+                    action: onDiscard
+                )
                 .buttonStyle(.bordered)
                 .focusable(false)
+            case .transcribedToClipboard, .noSpeech:
+                EmptyView()
+            default:
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .buttonStyle(.bordered)
+                    .focusable(false)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -56,12 +75,17 @@ struct OverlayView: View {
                 .frame(width: 12, height: 12)
                 .shadow(color: .red.opacity(0.6), radius: 4)
                 .accessibilityLabel("Recording")
-        case .completed:
+        case .completed, .transcribedToClipboard:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .font(.title3)
                 .accessibilityHidden(true)
-        case .tooShort, .failed:
+        case .noSpeech:
+            Image(systemName: "waveform.slash")
+                .foregroundStyle(.secondary)
+                .font(.title3)
+                .accessibilityHidden(true)
+        case .tooShort, .failed, .transcriptionFailed:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .font(.title3)
@@ -71,7 +95,7 @@ struct OverlayView: View {
                 .foregroundStyle(.secondary)
                 .font(.title3)
                 .accessibilityHidden(true)
-        case .preparing, .finalizing:
+        case .preparing, .finalizing, .transcribing:
             ProgressView()
                 .controlSize(.small)
                 .accessibilityLabel("Working")
@@ -95,6 +119,14 @@ struct OverlayView: View {
             }
         case .completed(let duration):
             "Captured locally (\(formatDuration(duration)))"
+        case .transcribing:
+            "Transcribing recording…"
+        case .transcribedToClipboard:
+            "Transcript copied"
+        case .noSpeech:
+            "No speech detected"
+        case .transcriptionFailed:
+            "Transcription failed"
         case .tooShort:
             "Recording too short"
         case .cancelled:
@@ -114,6 +146,14 @@ struct OverlayView: View {
             "Finalizing the captured audio"
         case .completed:
             "The local recording will be discarded"
+        case .transcribing(let providerName):
+            "Uploading completed audio to \(providerName)"
+        case .transcribedToClipboard:
+            "Paste the transcript manually"
+        case .noSpeech:
+            "The clipboard was left unchanged"
+        case .transcriptionFailed(let message):
+            message
         case .tooShort:
             "Record for at least half a second"
         case .failed(let message):
@@ -125,7 +165,11 @@ struct OverlayView: View {
 
     private var detailColor: Color {
         switch state {
-        case .recording(_, _, true), .tooShort, .failed:
+        case
+            .recording(_, _, true),
+            .tooShort,
+            .failed,
+            .transcriptionFailed:
             .orange
         default:
             .secondary
