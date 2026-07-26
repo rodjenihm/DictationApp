@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MenuBarContent: View {
-    let appModel: AppModel
+    @ObservedObject var appModel: AppModel
 
     var body: some View {
         Text(appModel.statusText)

@@ -3,9 +3,12 @@ import SwiftUI
 
 @MainActor
 final class ConfigurationWindowController: NSWindowController {
-    init() {
+    private let viewModel: ConfigurationViewModel
+
+    init(viewModel: ConfigurationViewModel) {
+        self.viewModel = viewModel
         let hostingController = NSHostingController(
-            rootView: ConfigurationView()
+            rootView: ConfigurationView(viewModel: viewModel)
         )
         let window = NSWindow(contentViewController: hostingController)
 
@@ -14,9 +17,11 @@ final class ConfigurationWindowController: NSWindowController {
             .titled,
             .closable,
             .miniaturizable,
+            .resizable,
         ]
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 560, height: 370))
+        window.setContentSize(NSSize(width: 700, height: 760))
+        window.minSize = NSSize(width: 640, height: 660)
         window.center()
 
         super.init(window: window)
@@ -32,6 +37,7 @@ final class ConfigurationWindowController: NSWindowController {
             return
         }
 
+        viewModel.reload()
         showWindow(nil)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)

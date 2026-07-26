@@ -10,8 +10,8 @@ This file is the durable handoff record between implementation sessions.
 | Slice | Status | Verification |
 | --- | --- | --- |
 | 1. Menu-bar utility shell | Complete | Debug and Release builds passed; signed bundle metadata, entitlements, architecture, activation policy, setup-window presence, process persistence, and clean termination verified |
-| 2. First-run configuration, preferences, and credentials | Next | — |
-| 3. Permission flows and configurable global shortcut | Pending | — |
+| 2. First-run configuration, preferences, and credentials | Complete | Signed Debug and Release builds, bundled fixture metadata, live OpenAI validation, transactional failure paths, Keychain CRUD, persistence, relaunch, and derived status verified |
+| 3. Permission flows and configurable global shortcut | Next | — |
 | 4. Local capture, explicit session state, and sound cues | Pending | — |
 | 5. Non-activating overlay and cancellation-safe cleanup | Pending | — |
 | 6. Provider-neutral completed-file OpenAI transcription | Pending | — |
@@ -52,6 +52,42 @@ Manual verification limitation:
 - Automated screenshot and click-path verification was unavailable because the host denied screen-capture and assistive-access automation.
 - Visually confirm menu-bar appearance and Settings close/reopen behavior only if a later slice changes the lifecycle or presentation code.
 
+### Slice 2 — First-run configuration, preferences, and credentials
+
+Implemented:
+
+- Added provider-neutral configuration, model-selection, language, and post-processing domain types.
+- Added `UserDefaults` persistence for non-sensitive configuration and the first-run presentation marker.
+- Added generic-password Keychain CRUD for the OpenAI API key.
+- Added centralized OpenAI transcription, post-processing, and language catalogs.
+- Added completed-file transcription validation through `/v1/audio/transcriptions`.
+- Added post-processing validation through `/v1/responses` with `store:false`.
+- Bundled a 0.75-second silent M4A validation fixture.
+- Replaced the setup placeholder with reusable onboarding and Settings controls.
+- Added masked Replace/Delete credential state, curated/custom models, language selection, upload-boundary disclosure, and transactional validation.
+- Derived the menu-bar readiness status from current configuration and credential availability.
+- Suppressed onboarding after successful completion while keeping Settings available.
+
+Verified:
+
+- Signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Built entitlements contain no App Sandbox entitlement.
+- The validation fixture is bundled as mono 16 kHz AAC/M4A with a 0.750-second duration.
+- First-run Settings opened with no Microphone or Accessibility permission prompt.
+- A valid key successfully validated `gpt-4o-transcribe` and enabled `gpt-5-mini` post-processing through their live OpenAI endpoints.
+- The active configuration and first-run marker persisted across a normal quit and relaunch; onboarding stayed closed and menu status was `Ready`.
+- The Keychain item exposed only masked saved state in the UI; the credential was absent from defaults, repository content, and command output.
+- An invalid replacement key was rejected while the original Keychain item modification timestamp and active configuration remained unchanged.
+- An inaccessible custom transcription model was rejected while `gpt-4o-transcribe` remained active.
+- Delete removed the Keychain item and changed Settings/menu status to unconfigured/`Setup required`.
+- Re-entering the valid key restored the configuration and `Ready` status.
+- Repository contained no Derived Data, build directories, result bundles, or credential-like API-key values.
+
+Manual verification:
+
+- The user performed the credential-entry and Settings interactions directly so the API key never entered chat, shell history, or automation output.
+- User-provided screenshots confirmed the masked UI, actionable validation errors, deletion state, and menu readiness transitions.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -64,4 +100,4 @@ Manual verification limitation:
 
 ## Next action
 
-Implement **Slice 2 — Complete first-run configuration, preferences, and credentials**.
+Implement **Slice 3 — Permission flows and configurable global shortcut**.

@@ -7,8 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
-        DispatchQueue.main.async { [appModel] in
-            appModel.showConfiguration()
+        if appModel.shouldShowConfigurationOnLaunch {
+            DispatchQueue.main.async { [appModel] in
+                appModel.showConfiguration()
+            }
         }
     }
 
