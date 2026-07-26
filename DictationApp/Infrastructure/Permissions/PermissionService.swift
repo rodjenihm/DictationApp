@@ -1,0 +1,86 @@
+import AppKit
+import ApplicationServices
+import AVFoundation
+
+enum MicrophonePermissionStatus: Equatable {
+    case notDetermined
+    case granted
+    case denied
+    case restricted
+}
+
+enum AccessibilityPermissionStatus: Equatable {
+    case granted
+    case notGranted
+}
+
+enum PermissionSettingsPane {
+    case microphone
+    case accessibility
+}
+
+@MainActor
+final class PermissionService {
+    func microphoneStatus() -> MicrophonePermissionStatus {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined:
+            .notDetermined
+        case .authorized:
+            .granted
+        case .denied:
+            .denied
+        case .restricted:
+            .restricted
+        @unknown default:
+            .restricted
+        }
+    }
+
+    func requestMicrophoneAccess() async -> MicrophonePermissionStatus {
+        guard microphoneStatus() == .notDetermined else {
+            return microphoneStatus()
+        }
+
+        _ = await AVCaptureDevice.requestAccess(for: .audio)
+        return microphoneStatus()
+    }
+
+    func accessibilityStatus() -> AccessibilityPermissionStatus {
+        AXIsProcessTrusted() ? .granted : .notGranted
+    }
+
+    func requestAccessibilityAccess() -> AccessibilityPermissionStatus {
+        let options = [
+            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true,
+        ] as CFDictionary
+
+        _ = AXIsProcessTrustedWithOptions(options)
+        return accessibilityStatus()
+    }
+
+    func openSystemSettings(for pane: PermissionSettingsPane) {
+        let paneURLString: String
+
+        switch pane {
+        case .microphone:
+            paneURLString =
+                "x-apple.systempreferences:com.apple.preference.security" +
+                "?Privacy_Microphone"
+        case .accessibility:
+            paneURLString =
+                "x-apple.systempreferences:com.apple.preference.security" +
+                "?Privacy_Accessibility"
+        }
+
+        if
+            let paneURL = URL(string: paneURLString),
+            NSWorkspace.shared.open(paneURL)
+        {
+            return
+        }
+
+        if let settingsURL = URL(string: "x-apple.systempreferences:") {
+            NSWorkspace.shared.open(settingsURL)
+        }
+    }
+}

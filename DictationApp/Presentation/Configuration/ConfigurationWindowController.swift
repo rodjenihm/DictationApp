@@ -20,8 +20,8 @@ final class ConfigurationWindowController: NSWindowController {
             .resizable,
         ]
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 700, height: 760))
-        window.minSize = NSSize(width: 640, height: 660)
+        window.setContentSize(NSSize(width: 720, height: 840))
+        window.minSize = NSSize(width: 660, height: 700)
         window.center()
 
         super.init(window: window)

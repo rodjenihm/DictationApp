@@ -12,6 +12,8 @@ struct ConfigurationView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    permissionsSection
+                    shortcutSection
                     credentialSection
                     transcriptionSection
                     postProcessingSection
@@ -24,7 +26,7 @@ struct ConfigurationView: View {
 
             footer
         }
-        .frame(minWidth: 640, minHeight: 660)
+        .frame(minWidth: 660, minHeight: 700)
         .confirmationDialog(
             "Delete the saved OpenAI API key?",
             isPresented: $isConfirmingCredentialDeletion
@@ -65,6 +67,117 @@ struct ConfigurationView: View {
             Spacer()
         }
         .padding(24)
+    }
+
+    private var permissionsSection: some View {
+        settingsGroup("Permissions", systemImage: "hand.raised") {
+            LabeledContent("Microphone") {
+                HStack(spacing: 10) {
+                    permissionStatusLabel(
+                        microphoneStatusTitle,
+                        systemImage: microphoneStatusSystemImage,
+                        color: microphoneStatusColor
+                    )
+
+                    switch viewModel.microphoneStatus {
+                    case .notDetermined:
+                        Button("Enable") {
+                            Task {
+                                await viewModel.enableMicrophone()
+                            }
+                        }
+                    case .denied, .restricted:
+                        Button("Open System Settings") {
+                            viewModel.openMicrophoneSettings()
+                        }
+                    case .granted:
+                        EmptyView()
+                    }
+                }
+            }
+
+            Text(
+                microphonePermissionExplanation
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+
+            LabeledContent("Accessibility") {
+                HStack(spacing: 10) {
+                    permissionStatusLabel(
+                        accessibilityStatusTitle,
+                        systemImage: accessibilityStatusSystemImage,
+                        color: accessibilityStatusColor
+                    )
+
+                    if viewModel.accessibilityStatus == .notGranted {
+                        Button("Enable") {
+                            viewModel.enableAccessibility()
+                        }
+
+                        Button("Open System Settings") {
+                            viewModel.openAccessibilitySettings()
+                        }
+                    }
+                }
+            }
+
+            Text(
+                "Accessibility enables automatic insertion. It is optional; " +
+                    "without it, completed transcripts remain on the clipboard. " +
+                    "In System Settings, use Privacy & Security → Accessibility."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var shortcutSection: some View {
+        settingsGroup("Global Shortcut", systemImage: "keyboard") {
+            LabeledContent("Start or stop dictation") {
+                ShortcutRecorder(
+                    shortcut: viewModel.globalShortcut,
+                    isEnabled: !viewModel.isValidating,
+                    onCandidate: viewModel.updateGlobalShortcut
+                )
+                .frame(width: 180, height: 28)
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                Text(
+                    "Click the shortcut, then press a key with Command, " +
+                        "Option, Control, or Shift. Escape cancels recording."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Spacer()
+
+                Button("Reset to Option–Space") {
+                    viewModel.resetGlobalShortcut()
+                }
+                .disabled(
+                    viewModel.globalShortcut == .defaultShortcut
+                        || viewModel.isValidating
+                )
+            }
+
+            if let error = viewModel.shortcutErrorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+            } else if let success = viewModel.shortcutSuccessMessage {
+                Label(success, systemImage: "checkmark.circle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+            }
+        }
     }
 
     private var credentialSection: some View {
@@ -243,7 +356,7 @@ struct ConfigurationView: View {
     private var footer: some View {
         HStack {
             Label(
-                "No microphone or Accessibility permission is requested here.",
+                "Opening Settings never requests permissions; Enable actions are explicit.",
                 systemImage: "lock.shield"
             )
             .font(.caption)
@@ -300,6 +413,93 @@ struct ConfigurationView: View {
                 Text("— \(detail)")
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private func permissionStatusLabel(
+        _ title: String,
+        systemImage: String,
+        color: Color
+    ) -> some View {
+        Label(title, systemImage: systemImage)
+            .foregroundStyle(color)
+    }
+
+    private var microphoneStatusTitle: String {
+        switch viewModel.microphoneStatus {
+        case .notDetermined:
+            "Not requested"
+        case .granted:
+            "Allowed"
+        case .denied:
+            "Denied"
+        case .restricted:
+            "Restricted"
+        }
+    }
+
+    private var microphoneStatusSystemImage: String {
+        switch viewModel.microphoneStatus {
+        case .granted:
+            "checkmark.circle.fill"
+        case .notDetermined:
+            "circle.dashed"
+        case .denied, .restricted:
+            "exclamationmark.circle"
+        }
+    }
+
+    private var microphoneStatusColor: Color {
+        switch viewModel.microphoneStatus {
+        case .granted:
+            .green
+        case .notDetermined:
+            .secondary
+        case .denied, .restricted:
+            .orange
+        }
+    }
+
+    private var microphonePermissionExplanation: String {
+        switch viewModel.microphoneStatus {
+        case .notDetermined:
+            "Microphone access is required to record dictation. It will also " +
+                "be requested just in time on the first recording attempt."
+        case .granted:
+            "Microphone access is available for local recording."
+        case .denied:
+            "Recording is unavailable until DictationApp is enabled in " +
+                "System Settings → Privacy & Security → Microphone."
+        case .restricted:
+            "Microphone access is restricted by this Mac's policy. Recording " +
+                "is unavailable while the restriction remains."
+        }
+    }
+
+    private var accessibilityStatusTitle: String {
+        switch viewModel.accessibilityStatus {
+        case .granted:
+            "Allowed"
+        case .notGranted:
+            "Not allowed"
+        }
+    }
+
+    private var accessibilityStatusSystemImage: String {
+        switch viewModel.accessibilityStatus {
+        case .granted:
+            "checkmark.circle.fill"
+        case .notGranted:
+            "circle.dashed"
+        }
+    }
+
+    private var accessibilityStatusColor: Color {
+        switch viewModel.accessibilityStatus {
+        case .granted:
+            .green
+        case .notGranted:
+            .secondary
         }
     }
 }

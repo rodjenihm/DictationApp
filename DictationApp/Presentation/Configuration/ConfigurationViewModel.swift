@@ -13,6 +13,15 @@ final class ConfigurationViewModel: ObservableObject {
     @Published var postProcessingModelChoice = ""
     @Published var postProcessingCustomModel = ""
 
+    @Published private(set) var microphoneStatus:
+        MicrophonePermissionStatus = .notDetermined
+    @Published private(set) var accessibilityStatus:
+        AccessibilityPermissionStatus = .notGranted
+    @Published private(set) var globalShortcut =
+        GlobalShortcut.defaultShortcut
+    @Published private(set) var shortcutErrorMessage: String?
+    @Published private(set) var shortcutSuccessMessage: String?
+
     @Published private(set) var credentialExists = false
     @Published private(set) var hasCompletedFirstRun = false
     @Published private(set) var isValidating = false
@@ -24,16 +33,22 @@ final class ConfigurationViewModel: ObservableObject {
     private let settingsStore: SettingsStore
     private let credentialStore: any CredentialStore
     private let validator: any OpenAIConfigurationValidating
+    private let permissionService: PermissionService
+    private let shortcutService: GlobalShortcutService
     private var savedConfiguration: AppConfiguration = .default
 
     init(
         settingsStore: SettingsStore,
         credentialStore: any CredentialStore,
-        validator: any OpenAIConfigurationValidating
+        validator: any OpenAIConfigurationValidating,
+        permissionService: PermissionService,
+        shortcutService: GlobalShortcutService
     ) {
         self.settingsStore = settingsStore
         self.credentialStore = credentialStore
         self.validator = validator
+        self.permissionService = permissionService
+        self.shortcutService = shortcutService
         reload()
     }
 
@@ -69,9 +84,14 @@ final class ConfigurationViewModel: ObservableObject {
         let stored = settingsStore.load()
         savedConfiguration = stored.configuration
         hasCompletedFirstRun = stored.hasCompletedFirstRun
+        globalShortcut = stored.globalShortcut
         apply(stored.configuration)
         candidateAPIKey = ""
         successMessage = nil
+        shortcutSuccessMessage = nil
+        shortcutErrorMessage =
+            shortcutService.registrationError?.localizedDescription
+        refreshSystemState()
 
         do {
             credentialExists = try credentialStore.credentialExists()
@@ -80,6 +100,59 @@ final class ConfigurationViewModel: ObservableObject {
             credentialExists = false
             errorMessage = error.localizedDescription
         }
+    }
+
+    func refreshSystemState() {
+        microphoneStatus = permissionService.microphoneStatus()
+        accessibilityStatus = permissionService.accessibilityStatus()
+    }
+
+    func enableMicrophone() async {
+        microphoneStatus =
+            await permissionService.requestMicrophoneAccess()
+    }
+
+    func enableAccessibility() {
+        accessibilityStatus =
+            permissionService.requestAccessibilityAccess()
+    }
+
+    func openMicrophoneSettings() {
+        permissionService.openSystemSettings(for: .microphone)
+    }
+
+    func openAccessibilitySettings() {
+        permissionService.openSystemSettings(for: .accessibility)
+    }
+
+    func updateGlobalShortcut(_ candidate: GlobalShortcut) {
+        let previousShortcut = globalShortcut
+        shortcutErrorMessage = nil
+        shortcutSuccessMessage = nil
+
+        do {
+            try shortcutService.replaceShortcut(with: candidate)
+
+            do {
+                try settingsStore.commit(globalShortcut: candidate)
+            } catch {
+                try? shortcutService.replaceShortcut(
+                    with: previousShortcut
+                )
+                throw error
+            }
+
+            globalShortcut = candidate
+            shortcutSuccessMessage =
+                "Global shortcut updated to \(candidate.displayName)."
+            onConfigurationChanged?()
+        } catch {
+            shortcutErrorMessage = error.localizedDescription
+        }
+    }
+
+    func resetGlobalShortcut() {
+        updateGlobalShortcut(.defaultShortcut)
     }
 
     func save() async {

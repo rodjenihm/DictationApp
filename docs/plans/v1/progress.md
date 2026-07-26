@@ -11,8 +11,8 @@ This file is the durable handoff record between implementation sessions.
 | --- | --- | --- |
 | 1. Menu-bar utility shell | Complete | Debug and Release builds passed; signed bundle metadata, entitlements, architecture, activation policy, setup-window presence, process persistence, and clean termination verified |
 | 2. First-run configuration, preferences, and credentials | Complete | Signed Debug and Release builds, bundled fixture metadata, live OpenAI validation, transactional failure paths, Keychain CRUD, persistence, relaunch, and derived status verified |
-| 3. Permission flows and configurable global shortcut | Next | — |
-| 4. Local capture, explicit session state, and sound cues | Pending | — |
+| 3. Permission flows and configurable global shortcut | Complete | Signed Debug and Release builds, permission isolation/status refresh, System Settings routing, exclusive shortcut activation, conflict rollback, persistence, and reset verified |
+| 4. Local capture, explicit session state, and sound cues | Next | — |
 | 5. Non-activating overlay and cancellation-safe cleanup | Pending | — |
 | 6. Provider-neutral completed-file OpenAI transcription | Pending | — |
 | 7. Recoverable capture failures and configuration repair | Pending | — |
@@ -88,6 +88,49 @@ Manual verification:
 - The user performed the credential-entry and Settings interactions directly so the API key never entered chat, shell history, or automation output.
 - User-provided screenshots confirmed the masked UI, actionable validation errors, deletion state, and menu readiness transitions.
 
+### Slice 3 — Permission flows and configurable global shortcut
+
+Implemented:
+
+- Added live Microphone and Accessibility status derived from macOS APIs without persisted grant flags.
+- Added the Hardened Runtime audio-input entitlement required for macOS to register and authorize the app's microphone request.
+- Added explicit permission Enable actions, denied-state explanations, and permission-specific System Settings routing with a root fallback.
+- Rechecked permissions whenever Settings opens and whenever the app becomes active.
+- Kept Accessibility optional with an explicit clipboard-only explanation.
+- Added a separately persisted, codable global shortcut with Option–Space as the backward-compatible default.
+- Added a focusable AppKit shortcut recorder requiring a standard modifier, with Escape cancellation and reset to Option–Space.
+- Added enabled system-reserved shortcut detection through `CopySymbolicHotKeys`.
+- Added exclusive HIToolbox hotkey registration with candidate-first replacement so failures retain the active shortcut.
+- Restored shortcut registration at launch and removed the event handler and registration during termination.
+- Routed shortcut activation through the app model; configured activation reports that the recording engine is not available in this intermediate slice.
+- Added actionable startup and replacement registration errors to Settings.
+
+Verified:
+
+- Signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- Opening and reopening Settings created only the Settings window and triggered no permission prompt.
+- After a bundle-scoped TCC reset, Microphone showed `Not requested`; its explicit Enable action advanced to `Allowed`.
+- System Settings listed DictationApp under Microphone with its toggle enabled, and the app refreshed to the live allowed status.
+- The Microphone and Accessibility flows remained independent and exposed their live statuses.
+- Accessibility Enable produced the macOS Accessibility Access flow, while Open System Settings opened the corresponding settings route.
+- Option–Space registered exclusively and fired while Finder was active, changing the menu status to `Recording engine not available yet`.
+- A temporary Control–Option–Shift–D shortcut registered exclusively, fired from Finder, persisted across relaunch, and was reset to Option–Space.
+- Escape exited shortcut recording without changing the active shortcut.
+- Enabled Command–Space was rejected as macOS-reserved while the previous shortcut remained registered.
+- A separately held exclusive shortcut was rejected as conflicting while the previous shortcut remained registered.
+- The saved OpenAI configuration and masked Keychain credential state remained intact; no OpenAI request was made.
+- Repository checks found no Derived Data, build directories, result bundles, or credential-like API-key values.
+
+Verification cleanup:
+
+- Left Microphone allowed, matching the user's request to grant the app access.
+- Restored and persisted Option–Space as the active shortcut.
+
+Manual verification limitation:
+
+- Screen capture remained unavailable on the host, so window, control, prompt, and menu state were verified through the macOS Accessibility hierarchy instead of screenshots.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -100,4 +143,4 @@ Manual verification:
 
 ## Next action
 
-Implement **Slice 3 — Permission flows and configurable global shortcut**.
+Implement **Slice 4 — Local capture, explicit session state, and sound cues**.
