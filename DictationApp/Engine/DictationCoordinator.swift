@@ -17,6 +17,7 @@ final class DictationCoordinator: ObservableObject {
     private var startTask: Task<Void, Never>?
     private var finalizationTask: Task<Void, Never>?
     private var elapsedTask: Task<Void, Never>?
+    private var ownedArtifactURL: URL?
 
     init(
         recorder: any AudioRecorder,
@@ -50,18 +51,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     var canCancel: Bool {
-        switch state {
-        case .preparing, .recording:
-            true
-        case
-            .idle,
-            .finalizing,
-            .completed,
-            .tooShort,
-            .cancelled,
-            .failed:
-            false
-        }
+        state != .idle
     }
 
     func start(
@@ -75,6 +65,7 @@ final class DictationCoordinator: ObservableObject {
         let identifier = UUID()
         sessionID = identifier
         sessionSoundCuesEnabled = soundCuesEnabled
+        ownedArtifactURL = nil
         state = .preparing(configuration)
 
         startTask = Task { [weak self] in
@@ -150,39 +141,32 @@ final class DictationCoordinator: ObservableObject {
     }
 
     func cancel() {
-        guard canCancel, let identifier = sessionID else {
+        guard canCancel else {
             return
         }
 
         let soundCuesEnabled = sessionSoundCuesEnabled
         startTask?.cancel()
+        finalizationTask?.cancel()
         startTask = nil
+        finalizationTask = nil
         elapsedTask?.cancel()
         elapsedTask = nil
         activeSession = nil
-        state = .finalizing(.cancelled)
+        sessionID = nil
+        sessionSoundCuesEnabled = true
 
-        finalizationTask = Task { [weak self] in
-            guard let self else {
-                return
-            }
-
-            await recorder.cancelRecording()
-            await soundCuePlayer.play(
-                .sessionCancelled,
-                enabled: soundCuesEnabled
-            )
-
-            guard sessionID == identifier else {
-                return
-            }
-
-            state = .cancelled
-            await returnToIdle(
-                after: 1.2,
-                sessionIdentifier: identifier
-            )
+        recorder.cancelImmediately()
+        if let ownedArtifactURL {
+            fileStore.delete(ownedArtifactURL)
         }
+        ownedArtifactURL = nil
+        state = .idle
+
+        soundCuePlayer.enqueue(
+            .sessionCancelled,
+            enabled: soundCuesEnabled
+        )
     }
 
     func cancelImmediately() {
@@ -194,7 +178,12 @@ final class DictationCoordinator: ObservableObject {
         elapsedTask = nil
         activeSession = nil
         sessionID = nil
+        sessionSoundCuesEnabled = true
         recorder.cancelImmediately()
+        if let ownedArtifactURL {
+            fileStore.delete(ownedArtifactURL)
+        }
+        ownedArtifactURL = nil
         state = .idle
     }
 
@@ -284,6 +273,12 @@ final class DictationCoordinator: ObservableObject {
 
             do {
                 let artifact = try await recorder.stopRecording()
+                guard sessionID == activeSession.identifier else {
+                    fileStore.delete(artifact.url)
+                    return
+                }
+
+                ownedArtifactURL = artifact.url
                 await soundCuePlayer.play(
                     .recordingStopped,
                     enabled: activeSession.soundCuesEnabled
@@ -291,6 +286,9 @@ final class DictationCoordinator: ObservableObject {
 
                 guard sessionID == activeSession.identifier else {
                     fileStore.delete(artifact.url)
+                    if ownedArtifactURL == artifact.url {
+                        ownedArtifactURL = nil
+                    }
                     return
                 }
 
@@ -300,6 +298,7 @@ final class DictationCoordinator: ObservableObject {
                             .minimumDuration
                 {
                     fileStore.delete(artifact.url)
+                    ownedArtifactURL = nil
                     state = .tooShort
                     await returnToIdle(
                         after: 1.2,
@@ -398,6 +397,9 @@ final class DictationCoordinator: ObservableObject {
 
         if let artifactURL {
             fileStore.delete(artifactURL)
+            if ownedArtifactURL == artifactURL {
+                ownedArtifactURL = nil
+            }
         }
 
         guard sessionID == sessionIdentifier else {
@@ -408,6 +410,7 @@ final class DictationCoordinator: ObservableObject {
         sessionSoundCuesEnabled = true
         activeSession = nil
         finalizationTask = nil
+        ownedArtifactURL = nil
         state = .idle
     }
 

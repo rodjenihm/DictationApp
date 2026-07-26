@@ -24,9 +24,27 @@ enum GlobalShortcutRegistrationError: LocalizedError {
     }
 }
 
+enum SessionCancellationShortcutRegistrationError: LocalizedError {
+    case conflict
+    case eventHandlerUnavailable
+    case hotKeyRegistrationFailed(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .conflict:
+            "Escape is already reserved by another application. Recording did not start."
+        case .eventHandlerUnavailable:
+            "The cancellation shortcut handler is unavailable. Recording did not start."
+        case .hotKeyRegistrationFailed(let status):
+            "Escape could not be reserved for cancellation (error \(status)). Recording did not start."
+        }
+    }
+}
+
 @MainActor
 final class GlobalShortcutService {
     var onShortcutPressed: (() -> Void)?
+    var onSessionCancellationShortcutPressed: (() -> Void)?
 
     private(set) var activeShortcut: GlobalShortcut?
     private(set) var registrationError: GlobalShortcutRegistrationError?
@@ -36,6 +54,8 @@ final class GlobalShortcutService {
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeyRef: EventHotKeyRef?
     private var activeHotKeyID: UInt32?
+    private var sessionCancellationHotKeyRef: EventHotKeyRef?
+    private var sessionCancellationHotKeyID: UInt32?
     private var nextHotKeyID: UInt32 = 1
 
     func start(with shortcut: GlobalShortcut) throws {
@@ -138,7 +158,56 @@ final class GlobalShortcutService {
         registrationError = nil
     }
 
+    func registerSessionCancellationShortcut() throws {
+        guard sessionCancellationHotKeyRef == nil else {
+            return
+        }
+
+        guard eventHandlerRef != nil else {
+            throw SessionCancellationShortcutRegistrationError
+                .eventHandlerUnavailable
+        }
+
+        let candidateID = nextHotKeyID
+        nextHotKeyID &+= 1
+
+        var candidateRef: EventHotKeyRef?
+        let hotKeyID = EventHotKeyID(
+            signature: Self.signature,
+            id: candidateID
+        )
+        let status = RegisterEventHotKey(
+            UInt32(kVK_Escape),
+            0,
+            hotKeyID,
+            GetApplicationEventTarget(),
+            UInt32(kEventHotKeyExclusive),
+            &candidateRef
+        )
+
+        guard status == noErr, let candidateRef else {
+            if status == eventHotKeyExistsErr {
+                throw SessionCancellationShortcutRegistrationError.conflict
+            }
+            throw SessionCancellationShortcutRegistrationError
+                .hotKeyRegistrationFailed(status)
+        }
+
+        sessionCancellationHotKeyRef = candidateRef
+        sessionCancellationHotKeyID = candidateID
+    }
+
+    func unregisterSessionCancellationShortcut() {
+        if let sessionCancellationHotKeyRef {
+            UnregisterEventHotKey(sessionCancellationHotKeyRef)
+        }
+        sessionCancellationHotKeyRef = nil
+        sessionCancellationHotKeyID = nil
+    }
+
     func stop() {
+        unregisterSessionCancellationShortcut()
+
         if let hotKeyRef {
             UnregisterEventHotKey(hotKeyRef)
         }
@@ -182,6 +251,11 @@ final class GlobalShortcutService {
     }
 
     private func handleHotKeyPressed(id: UInt32) {
+        if id == sessionCancellationHotKeyID {
+            onSessionCancellationShortcutPressed?()
+            return
+        }
+
         guard id == activeHotKeyID else {
             return
         }

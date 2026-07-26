@@ -13,8 +13,8 @@ This file is the durable handoff record between implementation sessions.
 | 2. First-run configuration, preferences, and credentials | Complete | Signed Debug and Release builds, bundled fixture metadata, live OpenAI validation, transactional failure paths, Keychain CRUD, persistence, relaunch, and derived status verified |
 | 3. Permission flows and configurable global shortcut | Complete | Signed Debug and Release builds, permission isolation/status refresh, System Settings routing, exclusive shortcut activation, conflict rollback, persistence, and reset verified |
 | 4. Local capture, explicit session state, and sound cues | Complete | Signed Debug and Release builds, live menu/shortcut capture, finalized AAC metadata, duration controls, cue playback/toggle persistence, short/cancel/quit cleanup, and idle recovery verified |
-| 5. Non-activating overlay and cancellation-safe cleanup | Next | — |
-| 6. Provider-neutral completed-file OpenAI transcription | Pending | — |
+| 5. Non-activating overlay and cancellation-safe cleanup | Complete | Signed Debug and Release builds, non-activating two-display overlay behavior, menu/overlay/Escape cancellation, Escape conflict rollback/non-propagation, immediate cross-state cleanup, and startup orphan removal verified |
+| 6. Provider-neutral completed-file OpenAI transcription | Next | — |
 | 7. Recoverable capture failures and configuration repair | Pending | — |
 | 8. Independent optional OpenAI post-processing and raw fallback | Pending | — |
 | 9. Clipboard preservation and Accessibility insertion | Pending | — |
@@ -160,6 +160,35 @@ Verified:
 - The recording path contains no provider call, and no OpenAI request was made.
 - Repository checks found no Derived Data, build directories, result bundles, or credential-like API-key values.
 
+### Slice 5 — Non-activating overlay and cancellation-safe cleanup
+
+Implemented:
+
+- Added a borderless, floating, non-activating `NSPanel` hosting a compact SwiftUI recording pill.
+- Anchored each session to the display containing the pointer when preparation begins and retained that display while the pointer or focused application changes.
+- Added preparing, recording, duration-warning, finalizing, completed, too-short, cancelled, and capture-failure overlay presentations with pointer-operable Stop and Cancel controls.
+- Added an exclusive modifierless Escape hotkey registered before preparation and removed only after the coordinator returns to idle.
+- Added actionable Escape registration errors without disturbing the configured global shortcut.
+- Expanded cancellation to every non-idle state with synchronous recorder shutdown, task cancellation, artifact deletion, stale-session guards, immediate idle publication, and serialized post-shutdown sound cues.
+- Added best-effort startup removal of files scoped to the app-owned recording cache.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- Starting from TextEdit left TextEdit frontmost and its caret target unchanged while the overlay appeared; overlay Stop and Cancel remained pointer-operable without activating DictationApp.
+- A session started with the pointer on the secondary display placed the 500-point overlay at that display's bottom center; moving the pointer to the primary display did not relocate it. A subsequent session started on the primary display appeared there.
+- The overlay exposed the active input, elapsed time, finalization status, and existing transient completion/error acknowledgements through the macOS Accessibility hierarchy.
+- The configured shortcut and actual menu-bar Start/Cancel actions used the same recording flow as the overlay controls.
+- Escape cancelled immediately and did not close TextEdit's open Find bar; after idle, Escape reached TextEdit normally and closed the Find bar.
+- A separate process successfully reserved Escape exclusively; DictationApp then refused to start capture or show the overlay. Releasing the conflict allowed the still-registered Option–Space shortcut to start immediately without relaunch.
+- Preparing, recording, finalizing, and completed-acknowledgement cancellation returned directly to idle. Finalizing cancellation removed the overlay, and completed-state cancellation reduced the owned recording count from one to zero.
+- Cancelling and immediately starting a new session succeeded while serialized cues prevented a late stop/cancel cue from entering the new recording.
+- A seeded orphan inside `Recordings` was removed on launch while a sibling cache control file remained untouched; the control file was removed after verification.
+- Successful stop, every cancellation path, normal termination, and startup cleanup left no file in the app recording cache.
+- The recording/overlay path contains no provider invocation, and no OpenAI request was made.
+- Repository checks found no Derived Data, build directories, result bundles, temporary probe files, or credential-like API-key values.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -172,4 +201,4 @@ Verified:
 
 ## Next action
 
-Implement **Slice 5 — Non-activating overlay and cancellation-safe cleanup**.
+Implement **Slice 6 — Provider-neutral completed-file OpenAI transcription**.

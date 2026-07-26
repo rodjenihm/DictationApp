@@ -45,6 +45,15 @@ final class AppModel: ObservableObject {
     private lazy var configurationWindowController =
         ConfigurationWindowController(viewModel: configurationViewModel)
 
+    private lazy var overlayWindowController = OverlayWindowController(
+        onStop: { [weak self] in
+            self?.dictationCoordinator.stop()
+        },
+        onCancel: { [weak self] in
+            self?.cancelDictation()
+        }
+    )
+
     init() {
         refreshStatus()
     }
@@ -59,12 +68,17 @@ final class AppModel: ObservableObject {
         }
 
         hasStarted = true
+        recordingFileStore.removeOrphanedRecordings()
         sessionStateCancellable = dictationCoordinator.$state.sink {
             [weak self] state in
             self?.apply(state)
         }
         shortcutService.onShortcutPressed = { [weak self] in
             self?.performPrimaryAction()
+        }
+        shortcutService.onSessionCancellationShortcutPressed = {
+            [weak self] in
+            self?.cancelDictation()
         }
 
         do {
@@ -88,6 +102,7 @@ final class AppModel: ObservableObject {
 
     func stop() {
         dictationCoordinator.cancelImmediately()
+        overlayWindowController.dismiss()
         shortcutService.stop()
     }
 
@@ -127,6 +142,18 @@ final class AppModel: ObservableObject {
             return
         }
 
+        do {
+            try shortcutService.registerSessionCancellationShortcut()
+        } catch {
+            statusText =
+                (error as? LocalizedError)?.errorDescription
+                ?? "Escape could not be reserved for cancellation. Recording did not start."
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = true
+            canCancel = false
+            return
+        }
+
         dictationCoordinator.start(
             configuration: SessionConfiguration(
                 configuration: configuration,
@@ -162,12 +189,15 @@ final class AppModel: ObservableObject {
     private func apply(_ state: DictationSessionState) {
         switch state {
         case .idle:
+            shortcutService.unregisterSessionCancellationShortcut()
+            overlayWindowController.dismiss()
             refreshStatus(force: true)
         case .preparing:
             statusText = "Preparing recording…"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
             canCancel = true
+            overlayWindowController.present(.preparing)
         case .recording(let recording):
             let elapsed = formatDuration(recording.elapsed)
             statusText =
@@ -177,6 +207,13 @@ final class AppModel: ObservableObject {
             primaryActionTitle = "Stop Dictation"
             isPrimaryActionEnabled = true
             canCancel = true
+            overlayWindowController.present(
+                .recording(
+                    elapsed: recording.elapsed,
+                    inputDeviceName: recording.inputDeviceName,
+                    isNearDurationLimit: recording.isNearDurationLimit
+                )
+            )
         case .finalizing(let reason):
             switch reason {
             case .stopped:
@@ -188,28 +225,37 @@ final class AppModel: ObservableObject {
             }
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
-            canCancel = false
+            canCancel = true
+            overlayWindowController.present(.finalizing(reason))
         case .completed(let artifact):
             statusText =
                 "Captured locally (\(formatDuration(artifact.duration)))"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
-            canCancel = false
+            canCancel = true
+            overlayWindowController.present(
+                .completed(duration: artifact.duration)
+            )
         case .tooShort:
             statusText = "Recording too short — discarded"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
-            canCancel = false
+            canCancel = true
+            overlayWindowController.present(.tooShort)
         case .cancelled:
             statusText = "Recording cancelled"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
-            canCancel = false
+            canCancel = true
+            overlayWindowController.present(.cancelled)
         case .failed(let error):
             statusText = error.localizedDescription
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
-            canCancel = false
+            canCancel = true
+            overlayWindowController.present(
+                .failed(message: error.localizedDescription)
+            )
         }
     }
 

@@ -40,4 +40,19 @@ final class RecordingFileStore {
 
         try? fileManager.removeItem(at: url)
     }
+
+    func removeOrphanedRecordings() {
+        guard
+            let contents = try? fileManager.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: nil
+            )
+        else {
+            return
+        }
+
+        for url in contents {
+            try? fileManager.removeItem(at: url)
+        }
+    }
 }

@@ -23,12 +23,46 @@ enum SoundCue: CaseIterable {
 @MainActor
 final class SoundCuePlayer {
     private var activePlaybacks: [ObjectIdentifier: SoundPlayback] = [:]
+    private var playbackTail:
+        (identifier: UUID, task: Task<Void, Never>)?
 
     func play(_ cue: SoundCue, enabled: Bool) async {
+        await enqueue(cue, enabled: enabled).value
+    }
+
+    @discardableResult
+    func enqueue(
+        _ cue: SoundCue,
+        enabled: Bool
+    ) -> Task<Void, Never> {
         guard
             enabled,
-            let sound = NSSound(named: cue.systemSoundName)
+            NSSound(named: cue.systemSoundName) != nil
         else {
+            return Task {}
+        }
+
+        let identifier = UUID()
+        let previousTask = playbackTail?.task
+        let task = Task { @MainActor [weak self] in
+            await previousTask?.value
+            await self?.playImmediately(cue)
+        }
+        playbackTail = (identifier, task)
+
+        Task { @MainActor [weak self] in
+            await task.value
+            guard self?.playbackTail?.identifier == identifier else {
+                return
+            }
+            self?.playbackTail = nil
+        }
+
+        return task
+    }
+
+    private func playImmediately(_ cue: SoundCue) async {
+        guard let sound = NSSound(named: cue.systemSoundName) else {
             return
         }
 
