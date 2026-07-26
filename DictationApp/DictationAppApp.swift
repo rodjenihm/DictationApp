@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct DictationAppApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        MenuBarExtra("DictationApp", systemImage: "waveform.badge.mic") {
+            MenuBarContent(appModel: appDelegate.appModel)
         }
     }
 }
