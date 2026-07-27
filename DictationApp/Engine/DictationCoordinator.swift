@@ -13,7 +13,8 @@ final class DictationCoordinator: ObservableObject {
     private let postProcessingProvider: any PostProcessingProvider
     private let postProcessingRuntimeHealth:
         PostProcessingRuntimeHealth
-    private let clipboardWriter: any TranscriptClipboardWriting
+    private let clipboardService: any TranscriptClipboardServicing
+    private let textInsertionService: any TextInsertionServicing
     private let clock = ContinuousClock()
 
     private var sessionID: UUID?
@@ -24,6 +25,8 @@ final class DictationCoordinator: ObservableObject {
     private var elapsedTask: Task<Void, Never>?
     private var ownedArtifactURL: URL?
     private var failedSessionContext: FailedSessionContext?
+    private var activeClipboardTransaction:
+        (any ClipboardTransactionHandling)?
 
     init(
         recorder: any AudioRecorder,
@@ -33,7 +36,8 @@ final class DictationCoordinator: ObservableObject {
         transcriptionProvider: any TranscriptionProvider,
         postProcessingProvider: any PostProcessingProvider,
         postProcessingRuntimeHealth: PostProcessingRuntimeHealth,
-        clipboardWriter: any TranscriptClipboardWriting
+        clipboardService: any TranscriptClipboardServicing,
+        textInsertionService: any TextInsertionServicing
     ) {
         self.recorder = recorder
         self.soundCuePlayer = soundCuePlayer
@@ -43,7 +47,8 @@ final class DictationCoordinator: ObservableObject {
         self.postProcessingProvider = postProcessingProvider
         self.postProcessingRuntimeHealth =
             postProcessingRuntimeHealth
-        self.clipboardWriter = clipboardWriter
+        self.clipboardService = clipboardService
+        self.textInsertionService = textInsertionService
 
         self.recorder.onUnexpectedCaptureFailure = { [weak self] outcome in
             self?.handleUnexpectedCaptureFailure(outcome)
@@ -60,7 +65,10 @@ final class DictationCoordinator: ObservableObject {
             .completed,
             .transcribing,
             .postProcessing,
-            .transcribedToClipboard,
+            .inserting,
+            .inserted,
+            .insertionUnverified,
+            .clipboardFallback,
             .rawTranscriptFallback,
             .noSpeech,
             .transcriptionFailed,
@@ -76,7 +84,9 @@ final class DictationCoordinator: ObservableObject {
         switch state {
         case
             .idle,
-            .transcribedToClipboard,
+            .inserted,
+            .insertionUnverified,
+            .clipboardFallback,
             .rawTranscriptFallback,
             .noSpeech:
             false
@@ -87,6 +97,7 @@ final class DictationCoordinator: ObservableObject {
             .completed,
             .transcribing,
             .postProcessing,
+            .inserting,
             .transcriptionFailed,
             .captureFailed,
             .tooShort,
@@ -109,6 +120,7 @@ final class DictationCoordinator: ObservableObject {
         sessionSoundCuesEnabled = soundCuesEnabled
         ownedArtifactURL = nil
         failedSessionContext = nil
+        activeClipboardTransaction = nil
         state = .preparing(configuration)
 
         startTask = Task { [weak self] in
@@ -261,6 +273,26 @@ final class DictationCoordinator: ObservableObject {
         cancel()
     }
 
+    func dismissDeliveryStatus() {
+        switch state {
+        case .insertionUnverified, .clipboardFallback:
+            break
+        default:
+            return
+        }
+
+        finalizationTask?.cancel()
+        finalizationTask = nil
+        activeClipboardTransaction?.abandon()
+        activeClipboardTransaction = nil
+        sessionID = nil
+        sessionSoundCuesEnabled = true
+        activeSession = nil
+        failedSessionContext = nil
+        ownedArtifactURL = nil
+        state = .idle
+    }
+
     func cancel() {
         guard canCancel else {
             return
@@ -275,6 +307,8 @@ final class DictationCoordinator: ObservableObject {
         elapsedTask = nil
         activeSession = nil
         failedSessionContext = nil
+        activeClipboardTransaction?.restoreIfOwned()
+        activeClipboardTransaction = nil
         sessionID = nil
         sessionSoundCuesEnabled = true
 
@@ -300,6 +334,8 @@ final class DictationCoordinator: ObservableObject {
         elapsedTask = nil
         activeSession = nil
         failedSessionContext = nil
+        activeClipboardTransaction?.restoreIfOwned()
+        activeClipboardTransaction = nil
         sessionID = nil
         sessionSoundCuesEnabled = true
         recorder.cancelImmediately()
@@ -563,7 +599,7 @@ final class DictationCoordinator: ObservableObject {
         }
 
         guard configuration.postProcessingMode == .enabled else {
-            await copyTranscript(
+            await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage: nil,
                 sessionIdentifier: sessionIdentifier
@@ -579,10 +615,10 @@ final class DictationCoordinator: ObservableObject {
         if postProcessingRuntimeHealth.shouldSkip(
             postProcessingConfiguration
         ) {
-            await copyTranscript(
+            await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage:
-                    "Cleanup needs attention. The raw transcript was copied.",
+                    "Cleanup needs attention.",
                 sessionIdentifier: sessionIdentifier
             )
             return
@@ -598,10 +634,10 @@ final class DictationCoordinator: ObservableObject {
                 postProcessingConfiguration,
                 message: message
             )
-            await copyTranscript(
+            await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage:
-                    "Cleanup was unavailable. The raw transcript was copied.",
+                    "Cleanup was unavailable.",
                 sessionIdentifier: sessionIdentifier
             )
             return
@@ -629,7 +665,7 @@ final class DictationCoordinator: ObservableObject {
                     rawTranscript: rawTranscript
                 )
 
-            await copyTranscript(
+            await insertTranscript(
                 validatedOutput,
                 rawFallbackMessage: nil,
                 sessionIdentifier: sessionIdentifier
@@ -648,10 +684,10 @@ final class DictationCoordinator: ObservableObject {
                 )
             }
 
-            await copyTranscript(
+            await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage:
-                    "Cleanup was unavailable. The raw transcript was copied.",
+                    "Cleanup was unavailable.",
                 sessionIdentifier: sessionIdentifier
             )
         } catch is CancellationError {
@@ -659,10 +695,10 @@ final class DictationCoordinator: ObservableObject {
                 return
             }
 
-            await copyTranscript(
+            await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage:
-                    "Cleanup was unavailable. The raw transcript was copied.",
+                    "Cleanup was unavailable.",
                 sessionIdentifier: sessionIdentifier
             )
         } catch {
@@ -670,16 +706,16 @@ final class DictationCoordinator: ObservableObject {
                 return
             }
 
-            await copyTranscript(
+            await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage:
-                    "Cleanup was unavailable. The raw transcript was copied.",
+                    "Cleanup was unavailable.",
                 sessionIdentifier: sessionIdentifier
             )
         }
     }
 
-    private func copyTranscript(
+    private func insertTranscript(
         _ transcript: String,
         rawFallbackMessage: String?,
         sessionIdentifier: UUID
@@ -688,22 +724,102 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
-        clipboardWriter.write(transcript)
+        state = .inserting
+        let transaction = clipboardService.beginTransaction(
+            replacingContentsWith: transcript
+        )
+        activeClipboardTransaction = transaction
 
-        if let rawFallbackMessage {
-            state = .rawTranscriptFallback(
-                rawFallbackMessage
+        await Task.yield()
+
+        guard
+            sessionID == sessionIdentifier,
+            activeClipboardTransaction != nil
+        else {
+            return
+        }
+
+        let outcome = await textInsertionService.insert(
+            transcript,
+            using: transaction
+        )
+
+        guard sessionID == sessionIdentifier else {
+            return
+        }
+
+        activeClipboardTransaction = nil
+
+        switch outcome {
+        case .confirmed:
+            _ = transaction.restoreIfOwned()
+
+            if let rawFallbackMessage {
+                state = .rawTranscriptFallback(
+                    rawFallbackMessage
+                        + " The raw transcript was inserted."
+                )
+                await returnToIdle(
+                    after: 2.5,
+                    sessionIdentifier: sessionIdentifier
+                )
+            } else {
+                state = .inserted
+                await returnToIdle(
+                    after: 1.2,
+                    sessionIdentifier: sessionIdentifier
+                )
+            }
+        case .unverified:
+            let message = deliveryFallbackMessage(
+                outcome: .unverified,
+                rawFallbackMessage: rawFallbackMessage,
+                transcriptRemainsOnClipboard:
+                    transaction.isStillOwned
             )
+            transaction.abandon()
+            state = .insertionUnverified(message)
             await returnToIdle(
-                after: 2.5,
+                after: 6,
                 sessionIdentifier: sessionIdentifier
             )
-        } else {
-            state = .transcribedToClipboard
+        case .failed:
+            let message = deliveryFallbackMessage(
+                outcome: .failed,
+                rawFallbackMessage: rawFallbackMessage,
+                transcriptRemainsOnClipboard:
+                    transaction.isStillOwned
+            )
+            transaction.abandon()
+            state = .clipboardFallback(message)
             await returnToIdle(
-                after: 1.2,
+                after: 6,
                 sessionIdentifier: sessionIdentifier
             )
+        }
+    }
+
+    private func deliveryFallbackMessage(
+        outcome: TextInsertionOutcome,
+        rawFallbackMessage: String?,
+        transcriptRemainsOnClipboard: Bool
+    ) -> String {
+        let cleanupPrefix = rawFallbackMessage.map { $0 + " " } ?? ""
+
+        guard transcriptRemainsOnClipboard else {
+            return cleanupPrefix
+                + "The clipboard changed, so its newer contents were preserved."
+        }
+
+        switch outcome {
+        case .unverified:
+            return cleanupPrefix
+                + "Insertion could not be verified. The transcript remains on the clipboard."
+        case .failed:
+            return cleanupPrefix
+                + "Automatic insertion was unavailable. The transcript is ready to paste."
+        case .confirmed:
+            return cleanupPrefix
         }
     }
 
@@ -885,6 +1001,8 @@ final class DictationCoordinator: ObservableObject {
         sessionSoundCuesEnabled = true
         activeSession = nil
         failedSessionContext = nil
+        activeClipboardTransaction?.abandon()
+        activeClipboardTransaction = nil
         finalizationTask = nil
         ownedArtifactURL = nil
         state = .idle

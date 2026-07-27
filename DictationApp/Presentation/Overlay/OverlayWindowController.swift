@@ -9,6 +9,7 @@ final class OverlayWindowController {
     private let onDiscard: () -> Void
     private let onTranscribePartial: () -> Void
     private let onRepairTranscription: () -> Void
+    private let onDismiss: () -> Void
 
     private var panel: OverlayPanel?
     private var hostingController: NSHostingController<OverlayView>?
@@ -20,7 +21,8 @@ final class OverlayWindowController {
         onRetry: @escaping () -> Void,
         onDiscard: @escaping () -> Void,
         onTranscribePartial: @escaping () -> Void,
-        onRepairTranscription: @escaping () -> Void
+        onRepairTranscription: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
     ) {
         self.onStop = onStop
         self.onCancel = onCancel
@@ -28,6 +30,7 @@ final class OverlayWindowController {
         self.onDiscard = onDiscard
         self.onTranscribePartial = onTranscribePartial
         self.onRepairTranscription = onRepairTranscription
+        self.onDismiss = onDismiss
     }
 
     func present(_ state: OverlayViewState) {
@@ -42,7 +45,8 @@ final class OverlayWindowController {
             onRetry: onRetry,
             onDiscard: onDiscard,
             onTranscribePartial: onTranscribePartial,
-            onRepairTranscription: onRepairTranscription
+            onRepairTranscription: onRepairTranscription,
+            onDismiss: onDismiss
         )
 
         if let hostingController {

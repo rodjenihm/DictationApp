@@ -17,8 +17,8 @@ This file is the durable handoff record between implementation sessions.
 | 6. Provider-neutral completed-file OpenAI transcription | Complete | Signed Debug and Release builds, provider/retry and coordinator harnesses, both live curated models, Automatic/explicit language, clipboard/no-speech behavior, retained Retry/Discard, cancellation, and cleanup verified |
 | 7. Recoverable capture failures and configuration repair | Complete | Signed Debug and Release builds, recoverable-partial state/cleanup harness, transactional repair harness, permanent-provider classification harness, and retained-snapshot invariants verified |
 | 8. Independent optional OpenAI post-processing and raw fallback | Complete | Signed Debug and Release builds, provider/coordinator/configuration harnesses, both live curated cleanup models, disabled bypass, clipboard output, fallback timing, health-state skipping/clearing, cancellation, and cleanup verified |
-| 9. Clipboard preservation and Accessibility insertion | Next | — |
-| 10. Cross-stage cancellation and state-machine hardening | Pending | — |
+| 9. Clipboard preservation and Accessibility insertion | Complete | Signed Debug and Release builds, clipboard/boundary and coordinator harnesses, native and WebKit automatic paste, live Confirmed/Unverified/Failed outcomes, ownership races, cancellation rollback, and fallback/Dismiss behavior verified |
+| 10. Cross-stage cancellation and state-machine hardening | Next | — |
 | 11. Final v1 integration and polish | Pending | — |
 
 ## Completed slice records
@@ -268,6 +268,33 @@ Verified:
 - The original enabled/`gpt-5-mini` configuration and pre-verification clipboard content were restored.
 - Temporary harness sources, executables, module caches, signed build products, and logs were removed; repository checks found no Derived Data, result bundles, credential-like API-key values, transcripts, or unrelated changes.
 
+### Slice 9 — Clipboard preservation and Accessibility insertion
+
+Implemented:
+
+- Replaced the one-way transcript pasteboard writer with an in-memory clipboard snapshot and ownership-tracked transaction.
+- Materialized every available pasteboard item and data type before replacement, preserved item order, and restored the snapshot only while the transaction's `changeCount` still matched.
+- Added provider-neutral Confirmed, Unverified, and Failed insertion outcomes plus a focused-target Accessibility/CoreGraphics insertion service.
+- Resolved the focused element only after final text was available, required a writable selected-text attribute, and posted exactly one PID-targeted Command–V without a preceding AX write or retry insertion.
+- Added UTF-16 selection replacement and Unicode boundary spacing for letters, marks, decimal digits, and connector punctuation, temporarily applying the prepared payload to the owned clipboard while leaving the retained fallback transcript unchanged.
+- Held clipboard restoration through a bounded paste-consumption window so native and web targets read the transcript before confirmed/cancelled restoration can occur.
+- Added explicit inserting, confirmed-success, unverified, and clipboard-fallback states across the coordinator, menu, and non-activating overlay.
+- Restored still-owned clipboard contents after confirmed insertion or cancellation, abandoned snapshots after unverified/failed completion, and preserved newer external clipboard contents in every race.
+- Kept raw cleanup fallback delivery independent, showing inserted success for confirmed delivery and clipboard-ready messaging when automatic insertion was unavailable.
+- Added six-second unverified/clipboard fallback acknowledgements with Dismiss while retaining the existing 1.2-second success and 2.5-second raw-fallback timings.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- A temporary clipboard and boundary harness verified mixed binary/string item materialization, item order, empty clipboard restoration, delayed paste-window restoration, ownership change-count races, cancellation rollback, UTF-16 replacement, beginning/empty targets, selection replacement, and whitespace, punctuation, newline, Unicode-letter/mark, and connector-punctuation boundaries.
+- A temporary coordinator harness verified cleanup-disabled raw delivery, cleanup-enabled cleaned delivery, raw cleanup fallback, Confirmed restoration, Unverified/Failed snapshot abandonment, six-second fallback states, Dismiss, one insertion attempt, and cancellation rollback before insertion.
+- A development-signed live probe sharing the app's trusted code requirement automatically pasted into disposable AppKit and WebKit targets. Native and WebKit textarea caret insertion produced `hello brave world`, and WebKit textarea selection replacement produced `hello kind world`, all with Confirmed readback.
+- A chat-style WebKit `contenteditable` target automatically inserted `hello brave world` once and produced Unverified because WebKit normalized its boundary spaces to non-breaking spaces; the raw transcript remained available through the clipboard path.
+- A focused non-text button and an unsigned/untrusted probe produced Failed without posting a second insertion, covering unavailable targets and denied Accessibility.
+- Focused targets were resolved at the AX call rather than retained from recording start; no application, caret, selected range, transcript, or clipboard snapshot was persisted or logged.
+- Existing provider configuration, Keychain credential, shortcut, permissions, and sound-cue preference were not modified, and no OpenAI request was made during Slice 9 verification.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -280,4 +307,4 @@ Verified:
 
 ## Next action
 
-Implement **Slice 9 — Clipboard preservation and Accessibility insertion**.
+Implement **Slice 10 — Cross-stage cancellation and state-machine hardening**.

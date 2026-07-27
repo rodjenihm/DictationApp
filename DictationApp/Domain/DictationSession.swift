@@ -150,7 +150,10 @@ enum DictationSessionState: Equatable, Sendable {
     case completed(AudioArtifact)
     case transcribing(ProviderID)
     case postProcessing(ProviderID)
-    case transcribedToClipboard
+    case inserting
+    case inserted
+    case insertionUnverified(String)
+    case clipboardFallback(String)
     case rawTranscriptFallback(String)
     case noSpeech
     case transcriptionFailed(TranscriptionFailureState)

@@ -11,7 +11,10 @@ enum OverlayViewState: Equatable {
     case completed(duration: TimeInterval)
     case transcribing(providerName: String)
     case postProcessing(providerName: String)
-    case transcribedToClipboard
+    case inserting
+    case inserted
+    case insertionUnverified(message: String)
+    case clipboardFallback(message: String)
     case rawTranscriptFallback(message: String)
     case noSpeech
     case transcriptionFailed(message: String, canRepair: Bool)

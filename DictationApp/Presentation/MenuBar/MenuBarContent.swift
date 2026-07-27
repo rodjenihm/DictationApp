@@ -39,6 +39,12 @@ struct MenuBarContent: View {
             }
         }
 
+        if appModel.canDismissDeliveryStatus {
+            Button("Dismiss") {
+                appModel.dismissDeliveryStatus()
+            }
+        }
+
         Button(
             appModel.canRepairTranscription
                 ? "Repair Transcription Settings"

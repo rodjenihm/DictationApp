@@ -12,6 +12,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var canRepairTranscription = false
     @Published private(set) var canTranscribePartial = false
     @Published private(set) var canDiscardPartial = false
+    @Published private(set) var canDismissDeliveryStatus = false
 
     private let settingsStore = SettingsStore()
     private let credentialStore = KeychainCredentialStore()
@@ -46,7 +47,8 @@ final class AppModel: ObservableObject {
         postProcessingProvider: postProcessingProvider,
         postProcessingRuntimeHealth:
             postProcessingRuntimeHealth,
-        clipboardWriter: PasteboardTranscriptWriter()
+        clipboardService: PasteboardClipboardService(),
+        textInsertionService: AccessibilityTextInsertionService()
     )
 
     private lazy var configurationViewModel: ConfigurationViewModel = {
@@ -89,6 +91,9 @@ final class AppModel: ObservableObject {
         },
         onRepairTranscription: { [weak self] in
             self?.showConfiguration()
+        },
+        onDismiss: { [weak self] in
+            self?.dismissDeliveryStatus()
         }
     )
 
@@ -166,7 +171,10 @@ final class AppModel: ObservableObject {
             .completed,
             .transcribing,
             .postProcessing,
-            .transcribedToClipboard,
+            .inserting,
+            .inserted,
+            .insertionUnverified,
+            .clipboardFallback,
             .rawTranscriptFallback,
             .noSpeech,
             .transcriptionFailed,
@@ -196,6 +204,10 @@ final class AppModel: ObservableObject {
 
     func discardPartial() {
         dictationCoordinator.discardPartial()
+    }
+
+    func dismissDeliveryStatus() {
+        dictationCoordinator.dismissDeliveryStatus()
     }
 
     func quit() {
@@ -250,6 +262,7 @@ final class AppModel: ObservableObject {
         canRepairTranscription = false
         canTranscribePartial = false
         canDiscardPartial = false
+        canDismissDeliveryStatus = false
 
         guard hasCredential && configuration.isStructurallyValid else {
             statusText = "Setup required"
@@ -278,6 +291,7 @@ final class AppModel: ObservableObject {
         canRepairTranscription = false
         canTranscribePartial = false
         canDiscardPartial = false
+        canDismissDeliveryStatus = false
 
         switch state {
         case .idle:
@@ -348,13 +362,39 @@ final class AppModel: ObservableObject {
                     providerName: provider.displayName
                 )
             )
-        case .transcribedToClipboard:
+        case .inserting:
+            statusText = "Inserting transcript…"
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = true
+            overlayWindowController.present(.inserting)
+        case .inserted:
             shortcutService.unregisterSessionCancellationShortcut()
-            statusText = "Transcript copied — paste manually"
+            statusText = "Transcript inserted"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
             canCancel = false
-            overlayWindowController.present(.transcribedToClipboard)
+            overlayWindowController.present(.inserted)
+        case .insertionUnverified(let message):
+            shortcutService.unregisterSessionCancellationShortcut()
+            statusText = message
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = false
+            canDismissDeliveryStatus = true
+            overlayWindowController.present(
+                .insertionUnverified(message: message)
+            )
+        case .clipboardFallback(let message):
+            shortcutService.unregisterSessionCancellationShortcut()
+            statusText = message
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = false
+            canDismissDeliveryStatus = true
+            overlayWindowController.present(
+                .clipboardFallback(message: message)
+            )
         case .rawTranscriptFallback(let message):
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = message

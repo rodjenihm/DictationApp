@@ -8,6 +8,7 @@ struct OverlayView: View {
     let onDiscard: () -> Void
     let onTranscribePartial: () -> Void
     let onRepairTranscription: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 14) {
@@ -73,7 +74,13 @@ struct OverlayView: View {
                 .buttonStyle(.bordered)
                 .focusable(false)
             case
-                .transcribedToClipboard,
+                .insertionUnverified,
+                .clipboardFallback:
+                Button("Dismiss", action: onDismiss)
+                    .buttonStyle(.bordered)
+                    .focusable(false)
+            case
+                .inserted,
                 .rawTranscriptFallback,
                 .noSpeech:
                 EmptyView()
@@ -104,12 +111,15 @@ struct OverlayView: View {
                 .frame(width: 12, height: 12)
                 .shadow(color: .red.opacity(0.6), radius: 4)
                 .accessibilityLabel("Recording")
-        case .completed, .transcribedToClipboard:
+        case .completed, .inserted:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .font(.title3)
                 .accessibilityHidden(true)
-        case .rawTranscriptFallback:
+        case
+            .rawTranscriptFallback,
+            .insertionUnverified,
+            .clipboardFallback:
             Image(systemName: "text.badge.exclamationmark")
                 .foregroundStyle(.orange)
                 .font(.title3)
@@ -137,7 +147,8 @@ struct OverlayView: View {
             .preparing,
             .finalizing,
             .transcribing,
-            .postProcessing:
+            .postProcessing,
+            .inserting:
             ProgressView()
                 .controlSize(.small)
                 .accessibilityLabel("Working")
@@ -165,10 +176,16 @@ struct OverlayView: View {
             "Transcribing recording…"
         case .postProcessing:
             "Cleaning up transcript…"
-        case .transcribedToClipboard:
-            "Transcript copied"
+        case .inserting:
+            "Inserting transcript…"
+        case .inserted:
+            "Transcript inserted"
+        case .insertionUnverified:
+            "Transcript remains available"
+        case .clipboardFallback:
+            "Paste transcript manually"
         case .rawTranscriptFallback:
-            "Raw transcript copied"
+            "Raw transcript inserted"
         case .noSpeech:
             "No speech detected"
         case .transcriptionFailed:
@@ -198,8 +215,14 @@ struct OverlayView: View {
             "Uploading completed audio to \(providerName)"
         case .postProcessing(let providerName):
             "Sending the raw transcript to \(providerName)"
-        case .transcribedToClipboard:
-            "Paste the transcript manually"
+        case .inserting:
+            "Resolving the currently focused text element"
+        case .inserted:
+            "The previous clipboard contents were restored when possible"
+        case .insertionUnverified(let message):
+            message
+        case .clipboardFallback(let message):
+            message
         case .rawTranscriptFallback(let message):
             message
         case .noSpeech:
@@ -225,7 +248,9 @@ struct OverlayView: View {
             .failed,
             .transcriptionFailed,
             .captureFailed,
-            .rawTranscriptFallback:
+            .rawTranscriptFallback,
+            .insertionUnverified,
+            .clipboardFallback:
             .orange
         default:
             .secondary
@@ -238,6 +263,8 @@ struct OverlayView: View {
             640
         case .captureFailed:
             600
+        case .insertionUnverified, .clipboardFallback:
+            620
         default:
             500
         }
