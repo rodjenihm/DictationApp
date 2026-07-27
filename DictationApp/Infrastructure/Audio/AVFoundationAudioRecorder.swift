@@ -22,13 +22,16 @@ enum UnexpectedCaptureOutcome: Sendable {
 @MainActor
 protocol AudioRecorder: AnyObject {
     var onUnexpectedCaptureFailure:
-        ((UnexpectedCaptureOutcome) -> Void)? { get set }
+        ((UUID, UnexpectedCaptureOutcome) -> Void)? { get set }
 
-    func prepare(profile: RecordingProfile) async throws -> PreparedRecording
+    func prepare(
+        profile: RecordingProfile,
+        sessionIdentifier: UUID
+    ) async throws -> PreparedRecording
     func startPreparedRecording() async throws
     func stopRecording() async throws -> AudioArtifact
-    func cancelRecording() async
-    func cancelImmediately()
+    func cancelRecording(sessionIdentifier: UUID) async
+    func cancelImmediately(sessionIdentifier: UUID)
 }
 
 @MainActor
@@ -38,7 +41,7 @@ final class AVFoundationAudioRecorder:
     AVCaptureFileOutputRecordingDelegate
 {
     var onUnexpectedCaptureFailure:
-        ((UnexpectedCaptureOutcome) -> Void)?
+        ((UUID, UnexpectedCaptureOutcome) -> Void)?
 
     private let fileStore: RecordingFileStore
     private let captureQueue = DispatchQueue(
@@ -51,15 +54,31 @@ final class AVFoundationAudioRecorder:
     private var finishContinuation:
         CheckedContinuation<URL, any Error>?
     private var isExpectedFinish = false
+    private var preparingSessionIdentifiers: Set<UUID> = []
+    private var cancelledSessionIdentifiers: Set<UUID> = []
 
     init(fileStore: RecordingFileStore) {
         self.fileStore = fileStore
         super.init()
     }
 
-    func prepare(profile: RecordingProfile) async throws -> PreparedRecording {
+    func prepare(
+        profile: RecordingProfile,
+        sessionIdentifier: UUID
+    ) async throws -> PreparedRecording {
         guard context == nil else {
             throw AudioRecorderError.cannotConfigure
+        }
+        guard
+            !preparingSessionIdentifiers.contains(sessionIdentifier),
+            !cancelledSessionIdentifiers.contains(sessionIdentifier)
+        else {
+            throw CancellationError()
+        }
+
+        preparingSessionIdentifiers.insert(sessionIdentifier)
+        defer {
+            preparingSessionIdentifiers.remove(sessionIdentifier)
         }
 
         let outputURL: URL
@@ -74,14 +93,33 @@ final class AVFoundationAudioRecorder:
         do {
             let preparedContext = try await configureCapture(
                 profile: profile,
-                outputURL: outputURL
+                outputURL: outputURL,
+                sessionIdentifier: sessionIdentifier
             )
+
+            guard
+                cancelledSessionIdentifiers.remove(
+                    sessionIdentifier
+                ) == nil
+            else {
+                await stopCaptureSession(preparedContext)
+                fileStore.delete(outputURL)
+                throw CancellationError()
+            }
+
+            guard context == nil else {
+                await stopCaptureSession(preparedContext)
+                fileStore.delete(outputURL)
+                throw AudioRecorderError.cannotConfigure
+            }
+
             context = preparedContext
             installFailureObservers(for: preparedContext)
             return PreparedRecording(
                 inputDeviceName: preparedContext.inputDeviceName
             )
         } catch {
+            cancelledSessionIdentifiers.remove(sessionIdentifier)
             fileStore.delete(outputURL)
             throw error
         }
@@ -127,8 +165,11 @@ final class AVFoundationAudioRecorder:
         }
     }
 
-    func cancelRecording() async {
-        guard let context else {
+    func cancelRecording(sessionIdentifier: UUID) async {
+        guard
+            let context,
+            context.sessionIdentifier == sessionIdentifier
+        else {
             return
         }
 
@@ -146,8 +187,14 @@ final class AVFoundationAudioRecorder:
         fileStore.delete(context.outputURL)
     }
 
-    func cancelImmediately() {
-        guard let context else {
+    func cancelImmediately(sessionIdentifier: UUID) {
+        guard
+            let context,
+            context.sessionIdentifier == sessionIdentifier
+        else {
+            if preparingSessionIdentifiers.contains(sessionIdentifier) {
+                cancelledSessionIdentifiers.insert(sessionIdentifier)
+            }
             return
         }
 
@@ -168,6 +215,7 @@ final class AVFoundationAudioRecorder:
             }
         }
         fileStore.delete(context.outputURL)
+        cancelledSessionIdentifiers.remove(sessionIdentifier)
     }
 
     nonisolated func fileOutput(
@@ -176,7 +224,10 @@ final class AVFoundationAudioRecorder:
         from connections: [AVCaptureConnection]
     ) {
         Task { @MainActor [weak self] in
-            self?.handleDidStartRecording()
+            self?.handleDidStartRecording(
+                output: output,
+                fileURL: fileURL
+            )
         }
     }
 
@@ -190,6 +241,7 @@ final class AVFoundationAudioRecorder:
 
         Task { @MainActor [weak self] in
             await self?.handleDidFinishRecording(
+                output: output,
                 at: outputFileURL,
                 finishedSuccessfully: finishedSuccessfully
             )
@@ -198,7 +250,8 @@ final class AVFoundationAudioRecorder:
 
     private func configureCapture(
         profile: RecordingProfile,
-        outputURL: URL
+        outputURL: URL,
+        sessionIdentifier: UUID
     ) async throws -> CaptureContext {
         try await withCheckedThrowingContinuation { continuation in
             captureQueue.async {
@@ -258,7 +311,8 @@ final class AVFoundationAudioRecorder:
                             output: output,
                             outputURL: outputURL,
                             inputDeviceName: device.localizedName,
-                            profile: profile
+                            profile: profile,
+                            sessionIdentifier: sessionIdentifier
                         )
                     )
                 } catch let error as AudioRecorderError {
@@ -291,16 +345,32 @@ final class AVFoundationAudioRecorder:
         }
     }
 
-    private func handleDidStartRecording() {
+    private func handleDidStartRecording(
+        output: AVCaptureFileOutput,
+        fileURL: URL
+    ) {
+        guard
+            let context,
+            context.output === output,
+            context.outputURL == fileURL
+        else {
+            return
+        }
+
         startContinuation?.resume()
         startContinuation = nil
     }
 
     private func handleDidFinishRecording(
+        output: AVCaptureFileOutput,
         at outputURL: URL,
         finishedSuccessfully: Bool
     ) async {
-        guard let context else {
+        guard
+            let context,
+            context.output === output,
+            context.outputURL == outputURL
+        else {
             fileStore.delete(outputURL)
             return
         }
@@ -421,10 +491,14 @@ final class AVFoundationAudioRecorder:
                 at: outputURL,
                 context: context
             )
-            onUnexpectedCaptureFailure?(.partial(artifact))
+            onUnexpectedCaptureFailure?(
+                context.sessionIdentifier,
+                .partial(artifact)
+            )
         } catch {
             fileStore.delete(outputURL)
             onUnexpectedCaptureFailure?(
+                context.sessionIdentifier,
                 .failed(
                     delegateReportedSuccess
                         ? .invalidArtifact
@@ -511,6 +585,7 @@ private final class CaptureContext: @unchecked Sendable {
     let outputURL: URL
     let inputDeviceName: String
     let profile: RecordingProfile
+    let sessionIdentifier: UUID
     var observerTokens: [NSObjectProtocol] = []
     var isHandlingUnexpectedFailure = false
 
@@ -520,7 +595,8 @@ private final class CaptureContext: @unchecked Sendable {
         output: AVCaptureAudioFileOutput,
         outputURL: URL,
         inputDeviceName: String,
-        profile: RecordingProfile
+        profile: RecordingProfile,
+        sessionIdentifier: UUID
     ) {
         self.session = session
         self.device = device
@@ -528,5 +604,6 @@ private final class CaptureContext: @unchecked Sendable {
         self.outputURL = outputURL
         self.inputDeviceName = inputDeviceName
         self.profile = profile
+        self.sessionIdentifier = sessionIdentifier
     }
 }

@@ -215,6 +215,14 @@ final class AppModel: ObservableObject {
     }
 
     private func startDictation() {
+        guard !configurationViewModel.isValidating else {
+            statusText = "Finish Settings validation before starting"
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = true
+            canCancel = false
+            return
+        }
+
         let storedSettings = settingsStore.load()
         let configuration = storedSettings.configuration
         let hasCredential = (try? credentialStore.credentialExists()) ?? false
@@ -286,6 +294,10 @@ final class AppModel: ObservableObject {
     }
 
     private func apply(_ state: DictationSessionState) {
+        configurationViewModel.setSessionAccess(
+            configurationAccess(for: state)
+        )
+
         canRetryTranscription = false
         canDiscardTranscription = false
         canRepairTranscription = false
@@ -469,5 +481,37 @@ final class AppModel: ObservableObject {
             totalSeconds / 60,
             totalSeconds % 60
         )
+    }
+
+    private func configurationAccess(
+        for state: DictationSessionState
+    ) -> ConfigurationSessionAccess {
+        switch state {
+        case
+            .idle,
+            .inserted,
+            .insertionUnverified,
+            .clipboardFallback,
+            .rawTranscriptFallback,
+            .noSpeech:
+            return .editable
+        case .transcriptionFailed(let failure)
+            where failure.isConfigurationFailure:
+            return .transcriptionRepair
+        case
+            .preparing,
+            .recording,
+            .finalizing,
+            .completed,
+            .transcribing,
+            .postProcessing,
+            .inserting,
+            .transcriptionFailed,
+            .captureFailed,
+            .tooShort,
+            .cancelled,
+            .failed:
+            return .readOnly
+        }
     }
 }

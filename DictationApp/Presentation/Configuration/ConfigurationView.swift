@@ -12,6 +12,21 @@ struct ConfigurationView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let explanation =
+                        viewModel.sessionAccessExplanation
+                    {
+                        Label(
+                            explanation,
+                            systemImage: "lock.fill"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(
+                            horizontal: false,
+                            vertical: true
+                        )
+                    }
+
                     if viewModel.presentationMode == .full {
                         permissionsSection
                         shortcutSection
@@ -24,6 +39,7 @@ struct ConfigurationView: View {
                     }
                     resultMessage
                 }
+                .disabled(!viewModel.canEditPresentedSettings)
                 .padding(24)
             }
 
@@ -144,7 +160,9 @@ struct ConfigurationView: View {
             LabeledContent("Start or stop dictation") {
                 ShortcutRecorder(
                     shortcut: viewModel.globalShortcut,
-                    isEnabled: !viewModel.isValidating,
+                    isEnabled:
+                        viewModel.canEditPresentedSettings
+                        && !viewModel.isValidating,
                     onCandidate: viewModel.updateGlobalShortcut
                 )
                 .frame(width: 180, height: 28)

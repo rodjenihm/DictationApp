@@ -18,8 +18,8 @@ This file is the durable handoff record between implementation sessions.
 | 7. Recoverable capture failures and configuration repair | Complete | Signed Debug and Release builds, recoverable-partial state/cleanup harness, transactional repair harness, permanent-provider classification harness, and retained-snapshot invariants verified |
 | 8. Independent optional OpenAI post-processing and raw fallback | Complete | Signed Debug and Release builds, provider/coordinator/configuration harnesses, both live curated cleanup models, disabled bypass, clipboard output, fallback timing, health-state skipping/clearing, cancellation, and cleanup verified |
 | 9. Clipboard preservation and Accessibility insertion | Complete | Signed Debug and Release builds, clipboard/boundary and coordinator harnesses, native and WebKit automatic paste, live Confirmed/Unverified/Failed outcomes, ownership races, cancellation rollback, and fallback/Dismiss behavior verified |
-| 10. Cross-stage cancellation and state-machine hardening | Next | — |
-| 11. Final v1 integration and polish | Pending | — |
+| 10. Cross-stage cancellation and state-machine hardening | Complete | Signed Debug and Release builds plus a temporary coordinator/settings harness verified every cancellable stage, rapid restart isolation, stale completion suppression, clipboard rollback, repair/retry, and Settings locking |
+| 11. Final v1 integration and polish | Next | — |
 
 ## Completed slice records
 
@@ -295,6 +295,28 @@ Verified:
 - Focused targets were resolved at the AX call rather than retained from recording start; no application, caret, selected range, transcript, or clipboard snapshot was persisted or logged.
 - Existing provider configuration, Keychain credential, shortcut, permissions, and sound-cue preference were not modified, and no OpenAI request was made during Slice 9 verification.
 
+### Slice 10 — Cross-stage cancellation and state-machine hardening
+
+Implemented:
+
+- Replaced the separate start/finalization task ownership with one token-scoped session pipeline and an internal event stream spanning preparation, recording, recovery, provider work, insertion, and terminal delivery.
+- Added a centralized token-checking transition reducer and validated session ownership after every asynchronous boundary before state, artifact, provider-result, clipboard, or insertion side effects.
+- Structured elapsed-time updates under the pipeline and routed Stop, automatic-limit, unexpected-capture, partial-transcription, repair, and Retry actions through the current session stream.
+- Made cancellation invalidate session ownership first, cancel the pipeline and network work, stop only the matching recorder session, delete owned audio, clear retained text/session data, conditionally restore the clipboard, and publish idle synchronously.
+- Tagged recorder preparation and delegate callbacks with the session identifier, rejected late preparation, and ignored stale start/finish callbacks without disturbing a newer recorder context.
+- Added an explicit clipboard cancellation hook with reliable deferred restoration after a posted paste while preserving newer external clipboard contents.
+- Added live editable/read-only/transcription-repair Settings access modes, disabled local controls with an explanation during active work, guarded mutation methods, and blocked dictation start during configuration validation.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64.
+- Both final application bundles passed strict deep code-signature verification.
+- A temporary coordinator harness verified cancellation during preparation, finalization, transcription, post-processing, insertion, and retained transcription failure.
+- The harness verified immediate restart after cancellation, deletion of late finalized artifacts, suppression of delayed provider output and stale recorder callbacks, and no late state, clipboard, or insertion writes into the new session.
+- The harness verified cancellation-time clipboard rollback, preservation when ownership was lost, successful configuration repair plus Retry through the same session event stream, restricted repair access, read-only Settings mutation guards, and idle re-enablement.
+- Cancellation-insensitive fake provider and insertion operations were deliberately resumed after cancellation; session-token checks kept the coordinator idle or in the newer recording and prevented late delivery.
+- Temporary harness sources, executables, module caches, and signed build products were removed; repository checks found no Derived Data, build directories, result bundles, credential-like values, or verification artifacts.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -307,4 +329,4 @@ Verified:
 
 ## Next action
 
-Implement **Slice 10 — Cross-stage cancellation and state-machine hardening**.
+Implement **Slice 11 — Final v1 integration and polish**.

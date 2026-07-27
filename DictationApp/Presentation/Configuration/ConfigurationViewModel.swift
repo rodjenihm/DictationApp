@@ -6,6 +6,12 @@ enum ConfigurationPresentationMode: Equatable {
     case transcriptionRepair
 }
 
+enum ConfigurationSessionAccess: Equatable {
+    case editable
+    case readOnly
+    case transcriptionRepair
+}
+
 @MainActor
 final class ConfigurationViewModel: ObservableObject {
     static let customModelChoice = "__custom__"
@@ -35,6 +41,8 @@ final class ConfigurationViewModel: ObservableObject {
     @Published private(set) var successMessage: String?
     @Published private(set) var presentationMode:
         ConfigurationPresentationMode = .full
+    @Published private(set) var sessionAccess:
+        ConfigurationSessionAccess = .editable
 
     var onConfigurationChanged: (() -> Void)?
     var onTranscriptionRepairValidated:
@@ -87,7 +95,10 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     var canSave: Bool {
-        guard !isValidating else {
+        guard
+            !isValidating,
+            canEditPresentedSettings
+        else {
             return false
         }
 
@@ -120,11 +131,72 @@ final class ConfigurationViewModel: ObservableObject {
         )
     }
 
+    var canEditPresentedSettings: Bool {
+        switch (presentationMode, sessionAccess) {
+        case (.full, .editable):
+            true
+        case (.transcriptionRepair, .transcriptionRepair):
+            true
+        case
+            (.full, .readOnly),
+            (.full, .transcriptionRepair),
+            (.transcriptionRepair, .editable),
+            (.transcriptionRepair, .readOnly):
+            false
+        }
+    }
+
+    var sessionAccessExplanation: String? {
+        guard !canEditPresentedSettings else {
+            return nil
+        }
+
+        switch sessionAccess {
+        case .readOnly:
+            return
+                "Settings are read-only while the current dictation session is active."
+        case .editable:
+            return
+                "This repair view is no longer active. Reopen Settings to make changes."
+        case .transcriptionRepair:
+            return
+                "Only the saved credential and transcription model can be repaired for the retained recording."
+        }
+    }
+
     func prepareForPresentation(
         _ mode: ConfigurationPresentationMode
     ) {
-        presentationMode = mode
+        if
+            mode == .transcriptionRepair,
+            sessionAccess != .transcriptionRepair
+        {
+            presentationMode = .full
+        } else {
+            presentationMode = mode
+        }
         reload()
+    }
+
+    func setSessionAccess(_ access: ConfigurationSessionAccess) {
+        guard sessionAccess != access else {
+            return
+        }
+
+        sessionAccess = access
+
+        switch access {
+        case .transcriptionRepair:
+            presentationMode = .transcriptionRepair
+            reload()
+        case .editable:
+            if presentationMode == .transcriptionRepair {
+                presentationMode = .full
+                reload()
+            }
+        case .readOnly:
+            break
+        }
     }
 
     func reload() {
@@ -160,11 +232,17 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     func enableMicrophone() async {
+        guard canEditPresentedSettings else {
+            return
+        }
         microphoneStatus =
             await permissionService.requestMicrophoneAccess()
     }
 
     func enableAccessibility() {
+        guard canEditPresentedSettings else {
+            return
+        }
         accessibilityStatus =
             permissionService.requestAccessibilityAccess()
     }
@@ -178,6 +256,13 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     func updateGlobalShortcut(_ candidate: GlobalShortcut) {
+        guard
+            presentationMode == .full,
+            sessionAccess == .editable
+        else {
+            return
+        }
+
         let previousShortcut = globalShortcut
         shortcutErrorMessage = nil
         shortcutSuccessMessage = nil
@@ -204,6 +289,12 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     func resetGlobalShortcut() {
+        guard
+            presentationMode == .full,
+            sessionAccess == .editable
+        else {
+            return
+        }
         updateGlobalShortcut(.defaultShortcut)
     }
 
@@ -315,7 +406,11 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     func deleteCredential() {
-        guard !isValidating else {
+        guard
+            !isValidating,
+            presentationMode == .full,
+            sessionAccess == .editable
+        else {
             return
         }
 

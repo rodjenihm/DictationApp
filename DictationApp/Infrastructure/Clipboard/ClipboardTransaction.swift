@@ -12,6 +12,9 @@ protocol ClipboardTransactionHandling: AnyObject {
     @discardableResult
     func restoreIfOwned() -> Bool
 
+    @discardableResult
+    func cancelAndRestoreIfOwned() -> Bool
+
     func abandon()
 }
 
@@ -118,6 +121,11 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
         return true
     }
 
+    @discardableResult
+    func cancelAndRestoreIfOwned() -> Bool {
+        restoreIfOwned()
+    }
+
     func abandon() {
         deferredRestorationTask?.cancel()
         deferredRestorationTask = nil
@@ -132,11 +140,7 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
             return
         }
 
-        deferredRestorationTask = Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-
+        deferredRestorationTask = Task { @MainActor [self] in
             try? await clock.sleep(until: deadline)
             deferredRestorationTask = nil
             _ = restoreIfOwned()

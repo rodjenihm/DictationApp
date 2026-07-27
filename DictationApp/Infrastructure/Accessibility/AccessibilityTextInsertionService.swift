@@ -11,6 +11,10 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         _ text: String,
         using clipboardTransaction: any ClipboardTransactionHandling
     ) async -> TextInsertionOutcome {
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
         guard AXIsProcessTrusted() else {
             return .failed
         }
@@ -61,6 +65,7 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         guard
+            !Task.isCancelled,
             postPasteShortcut(to: focusedElement)
         else {
             if insertedText != text {
@@ -126,14 +131,7 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
     }
 
     private func waitForPasteConsumption() async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.asyncAfter(
-                deadline: .now()
-                    + pasteConsumptionDelay.timeInterval
-            ) {
-                continuation.resume()
-            }
-        }
+        try? await Task.sleep(for: pasteConsumptionDelay)
     }
 
     private func focusedElement(
@@ -200,14 +198,5 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         return NSRange(location: range.location, length: range.length)
-    }
-}
-
-private extension Duration {
-    var timeInterval: TimeInterval {
-        let components = self.components
-        return TimeInterval(components.seconds)
-            + TimeInterval(components.attoseconds)
-                / 1_000_000_000_000_000_000
     }
 }
