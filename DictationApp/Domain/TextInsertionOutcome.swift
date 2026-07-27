@@ -4,6 +4,17 @@ enum TextInsertionOutcome: Equatable, Sendable {
     case confirmed
     case unverified
     case failed
+
+    var logClassification: String {
+        switch self {
+        case .confirmed:
+            "confirmed"
+        case .unverified:
+            "unverified"
+        case .failed:
+            "failed"
+        }
+    }
 }
 
 @MainActor

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 
 @MainActor
 final class DictationCoordinator: ObservableObject {
@@ -217,6 +218,13 @@ final class DictationCoordinator: ObservableObject {
 
     func cancelImmediately() {
         cancelCurrentSession(playCue: false)
+    }
+
+    func shutdownImmediately() {
+        cancelCurrentSession(
+            playCue: false,
+            isTerminating: true
+        )
     }
 
     private func runPipeline(
@@ -649,6 +657,7 @@ final class DictationCoordinator: ObservableObject {
                     session.effectiveConfiguration.language
             )
         )
+        AppLog.providers.info("Transcription operation succeeded")
         try requireCurrent(token)
 
         deleteOwnedArtifact(session.artifact.url)
@@ -660,10 +669,14 @@ final class DictationCoordinator: ObservableObject {
         activeTextPayload?.rawTranscript = normalizedTranscript
 
         if normalizedTranscript.isEmpty {
+            AppLog.session.info("Transcription produced no speech")
             guard transition(to: .noSpeech, token: token) else {
                 throw CancellationError()
             }
-            try await sleep(for: 2, token: token)
+            try await sleep(
+                for: TerminalDisplayDuration.noSpeech,
+                token: token
+            )
             return
         }
 
@@ -679,6 +692,9 @@ final class DictationCoordinator: ObservableObject {
         session: FailedSessionContext,
         token: SessionToken
     ) async throws {
+        AppLog.providers.error(
+            "Transcription stopped with classification \(failure.logClassification, privacy: .public)"
+        )
         await soundCuePlayer.play(
             .attentionRequired,
             enabled: session.soundCuesEnabled
@@ -772,6 +788,9 @@ final class DictationCoordinator: ObservableObject {
         if postProcessingRuntimeHealth.shouldSkip(
             postProcessingConfiguration
         ) {
+            AppLog.providers.notice(
+                "Post-processing skipped because configuration needs attention"
+            )
             try await insertTranscript(
                 rawTranscript,
                 rawFallbackMessage:
@@ -808,6 +827,7 @@ final class DictationCoordinator: ObservableObject {
         ) else {
             throw CancellationError()
         }
+        AppLog.providers.info("Post-processing operation started")
 
         do {
             let output = try await postProcessingProvider.process(
@@ -815,6 +835,9 @@ final class DictationCoordinator: ObservableObject {
                     rawTranscript: rawTranscript,
                     model: configuration.postProcessingModel
                 )
+            )
+            AppLog.providers.info(
+                "Post-processing operation succeeded"
             )
             try requireCurrent(token)
 
@@ -833,6 +856,9 @@ final class DictationCoordinator: ObservableObject {
         } catch is CancellationError {
             throw CancellationError()
         } catch let failure as ProviderOperationFailure {
+            AppLog.providers.error(
+                "Post-processing stopped with classification \(failure.logClassification, privacy: .public)"
+            )
             try requireCurrent(token)
 
             if failure.isConfigurationFailure {
@@ -851,6 +877,9 @@ final class DictationCoordinator: ObservableObject {
                 token: token
             )
         } catch {
+            AppLog.providers.error(
+                "Post-processing stopped with unclassified failure"
+            )
             try requireCurrent(token)
             try await insertTranscript(
                 rawTranscript,
@@ -888,6 +917,9 @@ final class DictationCoordinator: ObservableObject {
             transcript,
             using: transaction
         )
+        AppLog.insertion.info(
+            "Insertion completed with outcome \(outcome.logClassification, privacy: .public)"
+        )
         try requireCurrent(token)
         activeClipboardTransaction = nil
 
@@ -905,13 +937,19 @@ final class DictationCoordinator: ObservableObject {
                 ) else {
                     throw CancellationError()
                 }
-                try await sleep(for: 2.5, token: token)
+                try await sleep(
+                    for: TerminalDisplayDuration.rawFallback,
+                    token: token
+                )
             } else {
                 guard transition(to: .inserted, token: token)
                 else {
                     throw CancellationError()
                 }
-                try await sleep(for: 1.2, token: token)
+                try await sleep(
+                    for: TerminalDisplayDuration.success,
+                    token: token
+                )
             }
 
         case .unverified:
@@ -928,7 +966,10 @@ final class DictationCoordinator: ObservableObject {
             ) else {
                 throw CancellationError()
             }
-            try await sleep(for: 6, token: token)
+            try await sleep(
+                for: TerminalDisplayDuration.clipboardFallback,
+                token: token
+            )
 
         case .failed:
             let message = deliveryFallbackMessage(
@@ -944,7 +985,10 @@ final class DictationCoordinator: ObservableObject {
             ) else {
                 throw CancellationError()
             }
-            try await sleep(for: 6, token: token)
+            try await sleep(
+                for: TerminalDisplayDuration.clipboardFallback,
+                token: token
+            )
         }
     }
 
@@ -953,6 +997,9 @@ final class DictationCoordinator: ObservableObject {
         token: SessionToken,
         soundCuesEnabled: Bool
     ) async {
+        AppLog.capture.error(
+            "Capture failed with classification \(error.logClassification, privacy: .public)"
+        )
         await soundCuePlayer.play(
             .attentionRequired,
             enabled: soundCuesEnabled
@@ -990,17 +1037,27 @@ final class DictationCoordinator: ObservableObject {
         to newState: DictationSessionState,
         token: SessionToken
     ) -> Bool {
+        let currentKind = state.kind
+        let nextKind = newState.kind
         guard
             isCurrent(token),
             isLegalTransition(
-                from: state.kind,
-                to: newState.kind
+                from: currentKind,
+                to: nextKind
             )
         else {
+            AppLog.session.error(
+                "Rejected stale or illegal session transition"
+            )
             return false
         }
 
         state = newState
+        if currentKind != nextKind {
+            AppLog.session.info(
+                "Session transition \(currentKind.logName, privacy: .public) -> \(nextKind.logName, privacy: .public)"
+            )
+        }
         return true
     }
 
@@ -1094,6 +1151,7 @@ final class DictationCoordinator: ObservableObject {
             fileStore.delete(ownedArtifactURL)
         }
         ownedArtifactURL = nil
+        AppLog.session.info("Session resources released")
     }
 
     private func completeCurrentSessionWithoutCue() {
@@ -1118,9 +1176,15 @@ final class DictationCoordinator: ObservableObject {
         }
         ownedArtifactURL = nil
         state = .idle
+        AppLog.session.info(
+            "Delivery status dismissed and session resources released"
+        )
     }
 
-    private func cancelCurrentSession(playCue: Bool) {
+    private func cancelCurrentSession(
+        playCue: Bool,
+        isTerminating: Bool = false
+    ) {
         guard
             let token = currentToken,
             state != .idle
@@ -1141,18 +1205,29 @@ final class DictationCoordinator: ObservableObject {
         activeTextPayload?.clear()
         activeTextPayload = nil
         failedSessionContext = nil
-        _ = activeClipboardTransaction?.cancelAndRestoreIfOwned()
+        let restoredClipboard =
+            activeClipboardTransaction?.cancelAndRestoreIfOwned()
+            ?? false
         activeClipboardTransaction = nil
 
-        recorder.cancelImmediately(
-            sessionIdentifier: token.id
-        )
+        if isTerminating {
+            recorder.shutdownImmediately(
+                sessionIdentifier: token.id
+            )
+        } else {
+            recorder.cancelImmediately(
+                sessionIdentifier: token.id
+            )
+        }
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
         }
         ownedArtifactURL = nil
         sessionSoundCuesEnabled = true
         state = .idle
+        AppLog.session.notice(
+            "Session cancelled; clipboard restoration owned=\(restoredClipboard, privacy: .public)"
+        )
 
         if playCue {
             soundCuePlayer.enqueue(
@@ -1390,4 +1465,36 @@ private extension DictationSessionState {
             .failed
         }
     }
+}
+
+private extension SessionStateKind {
+    var logName: String {
+        switch self {
+        case .idle: "idle"
+        case .preparing: "preparing"
+        case .recording: "recording"
+        case .finalizing: "finalizing"
+        case .completed: "completed"
+        case .transcribing: "transcribing"
+        case .postProcessing: "post_processing"
+        case .inserting: "inserting"
+        case .inserted: "inserted"
+        case .insertionUnverified: "insertion_unverified"
+        case .clipboardFallback: "clipboard_fallback"
+        case .rawTranscriptFallback: "raw_fallback"
+        case .noSpeech: "no_speech"
+        case .transcriptionFailed: "transcription_failed"
+        case .captureFailed: "capture_failed"
+        case .tooShort: "too_short"
+        case .cancelled: "cancelled"
+        case .failed: "failed"
+        }
+    }
+}
+
+private enum TerminalDisplayDuration {
+    static let success: TimeInterval = 1.2
+    static let noSpeech: TimeInterval = 2
+    static let rawFallback: TimeInterval = 2.5
+    static let clipboardFallback: TimeInterval = 6
 }

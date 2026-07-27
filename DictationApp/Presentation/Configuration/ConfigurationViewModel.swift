@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 
 enum ConfigurationPresentationMode: Equatable {
     case full
@@ -235,14 +236,23 @@ final class ConfigurationViewModel: ObservableObject {
         guard canEditPresentedSettings else {
             return
         }
+        AppLog.configuration.info(
+            "Explicit microphone permission action started"
+        )
         microphoneStatus =
             await permissionService.requestMicrophoneAccess()
+        AppLog.configuration.info(
+            "Microphone permission action completed"
+        )
     }
 
     func enableAccessibility() {
         guard canEditPresentedSettings else {
             return
         }
+        AppLog.configuration.info(
+            "Explicit Accessibility permission action started"
+        )
         accessibilityStatus =
             permissionService.requestAccessibilityAccess()
     }
@@ -282,8 +292,14 @@ final class ConfigurationViewModel: ObservableObject {
             globalShortcut = candidate
             shortcutSuccessMessage =
                 "Global shortcut updated to \(candidate.displayName)."
+            AppLog.configuration.info(
+                "Global shortcut updated successfully"
+            )
             onConfigurationChanged?()
         } catch {
+            AppLog.configuration.error(
+                "Global shortcut update failed"
+            )
             shortcutErrorMessage = error.localizedDescription
         }
     }
@@ -311,6 +327,9 @@ final class ConfigurationViewModel: ObservableObject {
         errorMessage = nil
         successMessage = nil
         isValidating = true
+        AppLog.configuration.info(
+            "Configuration save validation started"
+        )
         defer { isValidating = false }
 
         do {
@@ -397,10 +416,19 @@ final class ConfigurationViewModel: ObservableObject {
             successMessage = performedValidation
                 ? "Configuration saved and validated."
                 : "Configuration saved."
+            AppLog.configuration.info(
+                "Configuration save completed successfully"
+            )
             onConfigurationChanged?()
         } catch is CancellationError {
+            AppLog.configuration.notice(
+                "Configuration save validation cancelled"
+            )
             errorMessage = "Validation was cancelled."
         } catch {
+            AppLog.configuration.error(
+                "Configuration save failed"
+            )
             errorMessage = error.localizedDescription
         }
     }
@@ -422,8 +450,14 @@ final class ConfigurationViewModel: ObservableObject {
             credentialExists = false
             candidateAPIKey = ""
             successMessage = "The saved OpenAI API key was deleted."
+            AppLog.configuration.notice(
+                "Saved provider credential deleted"
+            )
             onConfigurationChanged?()
         } catch {
+            AppLog.configuration.error(
+                "Saved provider credential deletion failed"
+            )
             errorMessage = error.localizedDescription
         }
     }
@@ -432,6 +466,9 @@ final class ConfigurationViewModel: ObservableObject {
         errorMessage = nil
         successMessage = nil
         isValidating = true
+        AppLog.configuration.info(
+            "Transcription repair validation started"
+        )
         defer { isValidating = false }
 
         do {
@@ -508,11 +545,20 @@ final class ConfigurationViewModel: ObservableObject {
             apply(repairedConfiguration)
             successMessage =
                 "Transcription configuration repaired and validated. Retry the retained recording."
+            AppLog.configuration.info(
+                "Transcription repair completed successfully"
+            )
             onConfigurationChanged?()
             onTranscriptionRepairValidated?(repair)
         } catch is CancellationError {
+            AppLog.configuration.notice(
+                "Transcription repair validation cancelled"
+            )
             errorMessage = "Validation was cancelled."
         } catch {
+            AppLog.configuration.error(
+                "Transcription repair failed"
+            )
             errorMessage = error.localizedDescription
         }
     }

@@ -25,6 +25,9 @@ struct ConfigurationView: View {
                             horizontal: false,
                             vertical: true
                         )
+                        .accessibilityLabel(
+                            "Settings locked. \(explanation)"
+                        )
                     }
 
                     if viewModel.presentationMode == .full {
@@ -100,13 +103,25 @@ struct ConfigurationView: View {
 
                     switch viewModel.microphoneStatus {
                     case .notDetermined:
-                        Button("Enable") {
+                        AccessibleActionButton(
+                            title: "Enable",
+                            accessibilityLabel:
+                                "Enable microphone access",
+                            accessibilityHelp:
+                                "Requests permission from macOS."
+                        ) {
                             Task {
                                 await viewModel.enableMicrophone()
                             }
                         }
                     case .denied, .restricted:
-                        Button("Open System Settings") {
+                        AccessibleActionButton(
+                            title: "Open System Settings",
+                            accessibilityLabel:
+                                "Open Microphone settings",
+                            accessibilityHelp:
+                                "Opens the macOS Microphone privacy settings."
+                        ) {
                             viewModel.openMicrophoneSettings()
                         }
                     case .granted:
@@ -121,6 +136,10 @@ struct ConfigurationView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(
+                "Microphone status: \(microphoneStatusTitle). " +
+                    microphonePermissionExplanation
+            )
 
             Divider()
 
@@ -133,11 +152,23 @@ struct ConfigurationView: View {
                     )
 
                     if viewModel.accessibilityStatus == .notGranted {
-                        Button("Enable") {
+                        AccessibleActionButton(
+                            title: "Enable",
+                            accessibilityLabel:
+                                "Enable Accessibility access",
+                            accessibilityHelp:
+                                "Starts the macOS trust flow for automatic insertion."
+                        ) {
                             viewModel.enableAccessibility()
                         }
 
-                        Button("Open System Settings") {
+                        AccessibleActionButton(
+                            title: "Open System Settings",
+                            accessibilityLabel:
+                                "Open Accessibility settings",
+                            accessibilityHelp:
+                                "Opens the macOS Accessibility privacy settings."
+                        ) {
                             viewModel.openAccessibilitySettings()
                         }
                     }
@@ -152,6 +183,10 @@ struct ConfigurationView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityLabel(
+                "Accessibility status: \(accessibilityStatusTitle). " +
+                    "Accessibility is optional and enables automatic insertion."
+            )
         }
     }
 
@@ -166,12 +201,21 @@ struct ConfigurationView: View {
                     onCandidate: viewModel.updateGlobalShortcut
                 )
                 .frame(width: 180, height: 28)
+                .accessibilityLabel("Global dictation shortcut")
+                .accessibilityValue(
+                    viewModel.globalShortcut.displayName
+                )
+                .accessibilityHint(
+                    "Press Space or Return to record a replacement shortcut. " +
+                        "Press Escape while recording a shortcut to cancel."
+                )
             }
 
             HStack(alignment: .firstTextBaseline) {
                 Text(
                     "Click the shortcut, then press a key with Command, " +
-                        "Option, Control, or Shift. Escape cancels recording."
+                        "Option, Control, or Shift. During an active dictation " +
+                        "session, Escape cancels the session."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -179,7 +223,13 @@ struct ConfigurationView: View {
 
                 Spacer()
 
-                Button("Reset to Option–Space") {
+                AccessibleActionButton(
+                    title: "Reset to Option–Space",
+                    accessibilityLabel:
+                        "Reset global shortcut to Option–Space",
+                    accessibilityHelp:
+                        "Restores the default global dictation shortcut."
+                ) {
                     viewModel.resetGlobalShortcut()
                 }
                 .disabled(
@@ -208,6 +258,9 @@ struct ConfigurationView: View {
                 isOn: $viewModel.soundCuesEnabled
             )
             .disabled(viewModel.isValidating)
+            .accessibilityHint(
+                "Controls all recording and attention sound cues."
+            )
 
             Text(
                 "Plays distinct cues when recording starts, stops, is " +
@@ -234,6 +287,12 @@ struct ConfigurationView: View {
                 .foregroundStyle(
                     viewModel.credentialExists ? Color.green : Color.secondary
                 )
+                .accessibilityLabel("OpenAI API key status")
+                .accessibilityValue(
+                    viewModel.credentialExists
+                        ? "Saved"
+                        : "Not saved"
+                )
             }
 
             SecureField(
@@ -244,6 +303,12 @@ struct ConfigurationView: View {
             )
             .textFieldStyle(.roundedBorder)
             .disabled(viewModel.isValidating)
+            .accessibilityLabel("OpenAI API key")
+            .accessibilityHint(
+                viewModel.credentialExists
+                    ? "Enter a replacement key. The saved key is never displayed."
+                    : "Enter the key that will be stored in macOS Keychain."
+            )
 
             HStack {
                 Text(
@@ -258,7 +323,13 @@ struct ConfigurationView: View {
                     viewModel.credentialExists
                         && viewModel.presentationMode == .full
                 {
-                    Button("Delete", role: .destructive) {
+                    AccessibleActionButton(
+                        title: "Delete",
+                        accessibilityLabel:
+                            "Delete saved OpenAI API key",
+                        accessibilityHelp:
+                            "Opens a confirmation before removing the saved key."
+                    ) {
                         isConfirmingCredentialDeletion = true
                     }
                     .disabled(viewModel.isValidating)
@@ -288,6 +359,10 @@ struct ConfigurationView: View {
                 .labelsHidden()
                 .frame(maxWidth: 300)
                 .disabled(viewModel.isValidating)
+                .accessibilityLabel("Transcription model")
+                .accessibilityHint(
+                    "Selects the OpenAI model used for completed audio."
+                )
             }
 
             if
@@ -300,6 +375,9 @@ struct ConfigurationView: View {
                 )
                 .textFieldStyle(.roundedBorder)
                 .disabled(viewModel.isValidating)
+                .accessibilityLabel(
+                    "Custom transcription model identifier"
+                )
             }
 
             if viewModel.presentationMode == .full {
@@ -314,6 +392,12 @@ struct ConfigurationView: View {
                     .labelsHidden()
                     .frame(maxWidth: 300)
                     .disabled(viewModel.isValidating)
+                    .accessibilityLabel(
+                        "Transcription language hint"
+                    )
+                    .accessibilityHint(
+                        "Automatic sends no language hint and does not translate."
+                    )
                 }
             }
 
@@ -336,6 +420,9 @@ struct ConfigurationView: View {
                 isOn: $viewModel.postProcessingEnabled
             )
             .disabled(viewModel.isValidating)
+            .accessibilityHint(
+                "When enabled, each raw transcript is sent to OpenAI for cleanup."
+            )
 
             if viewModel.postProcessingEnabled {
                 if
@@ -349,6 +436,9 @@ struct ConfigurationView: View {
                                 "exclamationmark.triangle.fill"
                         )
                         .foregroundStyle(.orange)
+                        .accessibilityLabel(
+                            "Post-processing needs attention"
+                        )
 
                         Text(attentionMessage)
                             .font(.caption)
@@ -381,6 +471,10 @@ struct ConfigurationView: View {
                     .labelsHidden()
                     .frame(maxWidth: 300)
                     .disabled(viewModel.isValidating)
+                    .accessibilityLabel("Post-processing model")
+                    .accessibilityHint(
+                        "Selects the OpenAI model used to clean raw transcripts."
+                    )
                 }
 
                 if
@@ -393,6 +487,9 @@ struct ConfigurationView: View {
                     )
                     .textFieldStyle(.roundedBorder)
                     .disabled(viewModel.isValidating)
+                    .accessibilityLabel(
+                        "Custom post-processing model identifier"
+                    )
                 }
 
                 uploadNotice(
@@ -417,10 +514,16 @@ struct ConfigurationView: View {
                 .font(.callout)
                 .foregroundStyle(.red)
                 .textSelection(.enabled)
+                .accessibilityLabel(
+                    "Configuration error. \(errorMessage)"
+                )
         } else if let successMessage = viewModel.successMessage {
             Label(successMessage, systemImage: "checkmark.circle.fill")
                 .font(.callout)
                 .foregroundStyle(.green)
+                .accessibilityLabel(
+                    "Configuration status. \(successMessage)"
+                )
         }
     }
 
@@ -435,18 +538,26 @@ struct ConfigurationView: View {
 
             Spacer()
 
-            Button(viewModel.saveButtonTitle) {
+            AccessibleActionButton(
+                title: viewModel.saveButtonTitle,
+                accessibilityLabel: viewModel.saveButtonTitle,
+                accessibilityHelp:
+                    "Validates required cloud configuration before saving.",
+                isDefault: true
+            ) {
                 Task {
                     await viewModel.save()
                 }
             }
-            .buttonStyle(.borderedProminent)
             .disabled(!viewModel.canSave)
             .overlay(alignment: .leading) {
                 if viewModel.isValidating {
                     ProgressView()
                         .controlSize(.small)
                         .offset(x: -24)
+                        .accessibilityLabel(
+                            "Validating configuration"
+                        )
                 }
             }
         }

@@ -19,7 +19,7 @@ This file is the durable handoff record between implementation sessions.
 | 8. Independent optional OpenAI post-processing and raw fallback | Complete | Signed Debug and Release builds, provider/coordinator/configuration harnesses, both live curated cleanup models, disabled bypass, clipboard output, fallback timing, health-state skipping/clearing, cancellation, and cleanup verified |
 | 9. Clipboard preservation and Accessibility insertion | Complete | Signed Debug and Release builds, clipboard/boundary and coordinator harnesses, native and WebKit automatic paste, live Confirmed/Unverified/Failed outcomes, ownership races, cancellation rollback, and fallback/Dismiss behavior verified |
 | 10. Cross-stage cancellation and state-machine hardening | Complete | Signed Debug and Release builds plus a temporary coordinator/settings harness verified every cancellable stage, rapid restart isolation, stale completion suppression, clipboard rollback, repair/retry, and Settings locking |
-| 11. Final v1 integration and polish | Next | — |
+| 11. Final v1 integration and polish | Complete | Signed Debug and Release builds, bundle/signature checks, final menu/Settings AX audit, real capture/cancellation, bounded active-session quit, cleanup, and privacy-safe log inspection verified |
 
 ## Completed slice records
 
@@ -317,6 +317,36 @@ Verified:
 - Cancellation-insensitive fake provider and insertion operations were deliberately resumed after cancellation; session-token checks kept the coordinator idle or in the newer recording and prevented late delivery.
 - Temporary harness sources, executables, module caches, and signed build products were removed; repository checks found no Derived Data, build directories, result bundles, credential-like values, or verification artifacts.
 
+### Slice 11 — Final v1 integration and polish
+
+Implemented:
+
+- Centralized the specified success, no-speech, raw-fallback, and clipboard/unverified display durations.
+- Normalized the final local-recording, provider-upload, cleanup-upload, manual-paste, and shortcut-cancellation copy.
+- Added explicit Settings accessibility labels, values, and hints plus native AppKit action buttons with deterministic focus rings, enabled state, and Return-key default Save behavior.
+- Added privacy-conscious lifecycle, configuration, session, provider, capture, and insertion `Logger` categories containing only state, outcome, retry, ownership, count, and failure classifications.
+- Added classified capture/provider/insertion diagnostics without logging raw errors, identifiers, device or application names, filenames, credentials, audio, transcripts, or clipboard contents.
+- Kept normal cancellation's synchronous recorder shutdown while adding a separate termination path that invalidates ownership, deletes the recording, and returns immediately without waiting on AVFoundation.
+- Preserved startup orphan removal while reporting only its aggregate removal count.
+
+Verified:
+
+- Final normally signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum.
+- Both bundles passed strict deep code-signature verification; Hardened Runtime and the audio-input entitlement were present, `LSUIElement` remained enabled, and no App Sandbox entitlement was present.
+- The existing saved configuration relaunched as `Ready`; the status menu exposed Start Dictation, Open Settings, and Quit without changing defaults, Keychain state, permissions, or clipboard contents.
+- The Settings Accessibility hierarchy exposed the shortcut, credential, transcription model, language, cleanup toggle/model, Delete, Reset, and Save controls with actionable labels, values, and hints. Disabled Reset state, direct keyboard focus, and the Save default-button registration were verified.
+- A real Option–Space recording exposed the recording menu/overlay state, active input, Stop, and Cancel; Escape cancellation returned immediately to `Ready` and left no recording.
+- An active-recording quit exposed and corrected an AVFoundation termination hang. The final path exited promptly, logged bounded cleanup completion, and left no recording or running process.
+- Live unified-log inspection covered launch, capture, cancellation, and active-session quit. Entries contained only the approved state/outcome classifications; source inspection found no transcript, audio, credential, clipboard-content, request/response-body, custom-identifier, filename, device-name, or target-application logging.
+- Existing Slice 1–10 evidence remains applicable to untouched first-run, configuration repair, model/language, provider retry/fallback, duration, partial capture, multi-display, insertion, clipboard-race, and cross-stage cancellation behavior.
+- Repository checks found no Derived Data, build directories, result bundles, temporary probes, recordings, transcripts, or credential-like API-key values; the bundled silent validation fixture is the only tracked M4A.
+
+Verification limitations:
+
+- Runtime compatibility on an actual macOS 15 Apple Silicon Mac or VM remains unavailable; binary targeting and build compatibility were verified on the current macOS 26.5 Apple Silicon host.
+- A physical active-input disconnect, production ten-minute recording, destructive permission/configuration-loss reset, and live provider matrix were not repeated in this slice; their prior slice evidence remains recorded above.
+- The host's global full-keyboard-navigation preference is disabled. Native control focusability, key-view recalculation, and default Save registration were verified directly, but a full Tab traversal was not enabled by changing the user's system preference.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -329,4 +359,4 @@ Verified:
 
 ## Next action
 
-Implement **Slice 11 — Final v1 integration and polish**.
+The **v1 implementation is complete and awaiting review**.

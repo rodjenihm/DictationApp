@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 
 @MainActor
 protocol ClipboardTransactionHandling: AnyObject {
@@ -44,6 +45,9 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
         pasteboard.clearContents()
         _ = pasteboard.setString(replacement, forType: .string)
         ownedChangeCount = pasteboard.changeCount
+        AppLog.insertion.info(
+            "Clipboard transaction acquired ownership"
+        )
     }
 
     var isStillOwned: Bool {
@@ -93,6 +97,9 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
         self.snapshot = nil
 
         guard pasteboard.changeCount == ownedChangeCount else {
+            AppLog.insertion.notice(
+                "Clipboard restoration skipped because ownership was lost"
+            )
             return false
         }
 
@@ -118,6 +125,7 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
             _ = pasteboard.writeObjects(restoredItems)
         }
 
+        AppLog.insertion.info("Clipboard snapshot restored")
         return true
     }
 
@@ -131,6 +139,7 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
         deferredRestorationTask = nil
         earliestRestoration = nil
         snapshot = nil
+        AppLog.insertion.info("Clipboard snapshot released")
     }
 
     private func scheduleDeferredRestoration(

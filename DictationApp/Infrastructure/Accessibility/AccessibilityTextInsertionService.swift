@@ -1,6 +1,7 @@
 import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
+import OSLog
 
 @MainActor
 final class AccessibilityTextInsertionService: TextInsertionServicing {
@@ -12,16 +13,25 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         using clipboardTransaction: any ClipboardTransactionHandling
     ) async -> TextInsertionOutcome {
         guard !Task.isCancelled else {
+            AppLog.insertion.notice(
+                "Insertion skipped because the task was cancelled"
+            )
             return .failed
         }
 
         guard AXIsProcessTrusted() else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because Accessibility is not trusted"
+            )
             return .failed
         }
 
         let systemWideElement = AXUIElementCreateSystemWide()
         guard let focusedElement = focusedElement(from: systemWideElement)
         else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because no focused element exists"
+            )
             return .failed
         }
 
@@ -34,6 +44,9 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             ) == .success,
             isSettable.boolValue
         else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because focused text is not writable"
+            )
             return .failed
         }
 
@@ -54,6 +67,9 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         )
 
         guard clipboardTransaction.isStillOwned else {
+            AppLog.insertion.notice(
+                "Insertion stopped because clipboard ownership was lost"
+            )
             return .failed
         }
 
@@ -61,6 +77,9 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             insertedText != text,
             !clipboardTransaction.replaceOwnedContents(with: insertedText)
         {
+            AppLog.insertion.notice(
+                "Insertion stopped while preparing boundary spacing"
+            )
             return .failed
         }
 
@@ -71,6 +90,9 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             if insertedText != text {
                 _ = clipboardTransaction.replaceOwnedContents(with: text)
             }
+            AppLog.insertion.notice(
+                "Insertion could not post the paste command"
+            )
             return .failed
         }
 
@@ -89,10 +111,19 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         guard let expectedValue else {
+            AppLog.insertion.info(
+                "Insertion completed without a verifiable target value"
+            )
             return .unverified
         }
 
-        return actualValue == expectedValue ? .confirmed : .unverified
+        if actualValue == expectedValue {
+            AppLog.insertion.info("Insertion confirmed")
+            return .confirmed
+        }
+
+        AppLog.insertion.info("Insertion remained unverified")
+        return .unverified
     }
 
     private func postPasteShortcut(

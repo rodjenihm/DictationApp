@@ -1,10 +1,12 @@
 import AppKit
+import OSLog
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let appModel = AppModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppLog.lifecycle.info("Application finished launching")
         NSApp.setActivationPolicy(.accessory)
         appModel.start()
 
@@ -20,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AppLog.lifecycle.notice("Application will terminate")
         appModel.stop()
     }
 

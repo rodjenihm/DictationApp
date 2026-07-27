@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 struct RetryExecutor {
     typealias Sleep = (TimeInterval) async throws -> Void
@@ -39,16 +40,27 @@ struct RetryExecutor {
 
         while true {
             try Task.checkCancellation()
+            AppLog.providers.debug(
+                "Provider attempt \(attempt, privacy: .public) started"
+            )
 
             do {
-                return try await operation()
+                let value = try await operation()
+                AppLog.providers.debug(
+                    "Provider attempt \(attempt, privacy: .public) succeeded"
+                )
+                return value
             } catch is CancellationError {
+                AppLog.providers.notice("Provider operation cancelled")
                 throw ProviderOperationFailure.cancelled
             } catch let failure as ProviderOperationFailure {
                 guard
                     failure.isAutomaticallyRetryable,
                     attempt < maximumAttempts
                 else {
+                    AppLog.providers.error(
+                        "Provider operation stopped with classification \(failure.logClassification, privacy: .public)"
+                    )
                     throw failure
                 }
 
@@ -66,9 +78,15 @@ struct RetryExecutor {
                 )
 
                 if delay > 0 {
+                    AppLog.providers.notice(
+                        "Provider transient failure scheduled retry"
+                    )
                     do {
                         try await sleep(delay)
                     } catch is CancellationError {
+                        AppLog.providers.notice(
+                            "Provider retry wait cancelled"
+                        )
                         throw ProviderOperationFailure.cancelled
                     }
                     cumulativeWait += delay
@@ -76,6 +94,9 @@ struct RetryExecutor {
 
                 attempt += 1
             } catch {
+                AppLog.providers.error(
+                    "Provider operation stopped with unclassified failure"
+                )
                 throw ProviderOperationFailure.operation(
                     message: "The provider operation failed."
                 )

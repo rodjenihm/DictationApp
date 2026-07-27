@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 final class RecordingFileStore {
     private let fileManager: FileManager
@@ -41,18 +42,28 @@ final class RecordingFileStore {
         try? fileManager.removeItem(at: url)
     }
 
-    func removeOrphanedRecordings() {
+    @discardableResult
+    func removeOrphanedRecordings() -> Int {
         guard
             let contents = try? fileManager.contentsOfDirectory(
                 at: directoryURL,
                 includingPropertiesForKeys: nil
             )
         else {
-            return
+            return 0
         }
 
+        var removedCount = 0
         for url in contents {
-            try? fileManager.removeItem(at: url)
+            do {
+                try fileManager.removeItem(at: url)
+                removedCount += 1
+            } catch {
+                AppLog.lifecycle.error(
+                    "Startup recording cleanup could not remove an item"
+                )
+            }
         }
+        return removedCount
     }
 }

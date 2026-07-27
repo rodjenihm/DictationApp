@@ -23,6 +23,7 @@ struct ShortcutRecorder: NSViewRepresentable {
         control.shortcut = shortcut
         control.isEnabled = isEnabled
         control.refreshTitle()
+        control.refreshAccessibility()
     }
 }
 
@@ -41,6 +42,7 @@ final class ShortcutRecorderControl: NSButton {
         target = self
         action = #selector(beginRecording)
         refreshTitle()
+        refreshAccessibility()
     }
 
     @available(*, unavailable)
@@ -65,6 +67,7 @@ final class ShortcutRecorderControl: NSButton {
         window?.makeFirstResponder(self)
         isRecording = true
         refreshTitle()
+        refreshAccessibility()
     }
 
     override func keyDown(with event: NSEvent) {
@@ -84,6 +87,7 @@ final class ShortcutRecorderControl: NSButton {
         guard modifiers != 0 else {
             NSSound.beep()
             title = "Include a modifier"
+            refreshAccessibility()
             return
         }
 
@@ -110,9 +114,24 @@ final class ShortcutRecorderControl: NSButton {
             : shortcut.displayName
     }
 
+    func refreshAccessibility() {
+        setAccessibilityLabel("Global dictation shortcut")
+        setAccessibilityValue(
+            isRecording
+                ? "Waiting for a shortcut"
+                : shortcut.displayName
+        )
+        setAccessibilityHelp(
+            isRecording
+                ? "Press a modified key, or Escape to cancel."
+                : "Press Space or Return to record a new shortcut."
+        )
+    }
+
     private func finishRecording() {
         isRecording = false
         refreshTitle()
+        refreshAccessibility()
     }
 
     private static func carbonModifiers(

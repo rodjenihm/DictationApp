@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import OSLog
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -111,7 +112,12 @@ final class AppModel: ObservableObject {
         }
 
         hasStarted = true
-        recordingFileStore.removeOrphanedRecordings()
+        AppLog.lifecycle.info("Application services starting")
+        let orphanCount =
+            recordingFileStore.removeOrphanedRecordings()
+        AppLog.lifecycle.info(
+            "Startup cleanup removed \(orphanCount, privacy: .public) recording item(s)"
+        )
         sessionStateCancellable = dictationCoordinator.$state.sink {
             [weak self] state in
             self?.apply(state)
@@ -128,7 +134,11 @@ final class AppModel: ObservableObject {
             try shortcutService.start(
                 with: settingsStore.load().globalShortcut
             )
+            AppLog.lifecycle.info("Global shortcut service started")
         } catch {
+            AppLog.lifecycle.error(
+                "Global shortcut service failed to start"
+            )
             // Settings exposes the actionable registration error.
         }
 
@@ -154,9 +164,11 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
-        dictationCoordinator.cancelImmediately()
+        AppLog.lifecycle.notice("Bounded application shutdown started")
+        dictationCoordinator.shutdownImmediately()
         overlayWindowController.dismiss()
         shortcutService.stop()
+        AppLog.lifecycle.notice("Application shutdown cleanup finished")
     }
 
     func performPrimaryAction() {
@@ -216,6 +228,9 @@ final class AppModel: ObservableObject {
 
     private func startDictation() {
         guard !configurationViewModel.isValidating else {
+            AppLog.session.notice(
+                "Dictation start blocked by configuration validation"
+            )
             statusText = "Finish Settings validation before starting"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = true
@@ -228,6 +243,9 @@ final class AppModel: ObservableObject {
         let hasCredential = (try? credentialStore.credentialExists()) ?? false
 
         guard hasCredential && configuration.isStructurallyValid else {
+            AppLog.session.notice(
+                "Dictation start redirected to required setup"
+            )
             statusText = "Setup required"
             showConfiguration()
             return
@@ -236,6 +254,9 @@ final class AppModel: ObservableObject {
         do {
             try shortcutService.registerSessionCancellationShortcut()
         } catch {
+            AppLog.session.error(
+                "Dictation start blocked by cancellation shortcut conflict"
+            )
             statusText =
                 (error as? LocalizedError)?.errorDescription
                 ?? "Escape could not be reserved for cancellation. Recording did not start."
@@ -252,6 +273,7 @@ final class AppModel: ObservableObject {
             ),
             soundCuesEnabled: storedSettings.soundCuesEnabled
         )
+        AppLog.session.info("Dictation start accepted")
     }
 
     private func refreshStatus(force: Bool = false) {

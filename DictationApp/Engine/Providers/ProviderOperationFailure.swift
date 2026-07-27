@@ -37,4 +37,17 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
         }
         return false
     }
+
+    var logClassification: String {
+        switch self {
+        case .cancelled:
+            "cancelled"
+        case .transient:
+            "transient"
+        case .configuration:
+            "configuration"
+        case .operation:
+            "operation"
+        }
+    }
 }

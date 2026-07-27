@@ -130,6 +130,27 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
             "The microphone became unavailable before a usable partial recording was captured."
         }
     }
+
+    var logClassification: String {
+        switch self {
+        case .microphoneDenied:
+            "microphone_denied"
+        case .microphoneRestricted:
+            "microphone_restricted"
+        case .noInputDevice:
+            "no_input_device"
+        case .cannotConfigureCapture:
+            "cannot_configure"
+        case .cannotStartCapture:
+            "cannot_start"
+        case .cannotFinalizeRecording:
+            "cannot_finalize"
+        case .invalidRecording:
+            "invalid_recording"
+        case .partialRecordingTooShort:
+            "partial_too_short"
+        }
+    }
 }
 
 struct TranscriptionFailureState: Equatable, Sendable {

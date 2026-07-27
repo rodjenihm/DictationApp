@@ -210,7 +210,7 @@ struct OverlayView: View {
         case .finalizing(.automaticLimit):
             "Finalizing the captured audio"
         case .completed:
-            "The local recording will be discarded"
+            "Audio remains local until transcription begins"
         case .transcribing(let providerName):
             "Uploading completed audio to \(providerName)"
         case .postProcessing(let providerName):

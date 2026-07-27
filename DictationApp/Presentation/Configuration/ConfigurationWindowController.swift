@@ -20,6 +20,7 @@ final class ConfigurationWindowController: NSWindowController {
             .resizable,
         ]
         window.isReleasedWhenClosed = false
+        window.autorecalculatesKeyViewLoop = true
         window.setContentSize(NSSize(width: 720, height: 840))
         window.minSize = NSSize(width: 660, height: 700)
         window.center()
@@ -43,5 +44,6 @@ final class ConfigurationWindowController: NSWindowController {
         showWindow(nil)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+        window.recalculateKeyViewLoop()
     }
 }

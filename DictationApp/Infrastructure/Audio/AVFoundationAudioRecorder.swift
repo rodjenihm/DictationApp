@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import Foundation
+import OSLog
 
 struct PreparedRecording: Equatable, Sendable {
     let inputDeviceName: String
@@ -32,6 +33,13 @@ protocol AudioRecorder: AnyObject {
     func stopRecording() async throws -> AudioArtifact
     func cancelRecording(sessionIdentifier: UUID) async
     func cancelImmediately(sessionIdentifier: UUID)
+    func shutdownImmediately(sessionIdentifier: UUID)
+}
+
+extension AudioRecorder {
+    func shutdownImmediately(sessionIdentifier: UUID) {
+        cancelImmediately(sessionIdentifier: sessionIdentifier)
+    }
 }
 
 @MainActor
@@ -66,7 +74,11 @@ final class AVFoundationAudioRecorder:
         profile: RecordingProfile,
         sessionIdentifier: UUID
     ) async throws -> PreparedRecording {
+        AppLog.capture.info("Capture preparation started")
         guard context == nil else {
+            AppLog.capture.error(
+                "Capture preparation rejected because a context exists"
+            )
             throw AudioRecorderError.cannotConfigure
         }
         guard
@@ -115,12 +127,14 @@ final class AVFoundationAudioRecorder:
 
             context = preparedContext
             installFailureObservers(for: preparedContext)
+            AppLog.capture.info("Capture preparation succeeded")
             return PreparedRecording(
                 inputDeviceName: preparedContext.inputDeviceName
             )
         } catch {
             cancelledSessionIdentifiers.remove(sessionIdentifier)
             fileStore.delete(outputURL)
+            AppLog.capture.error("Capture preparation failed")
             throw error
         }
     }
@@ -145,6 +159,7 @@ final class AVFoundationAudioRecorder:
                 )
             }
         }
+        AppLog.capture.info("Capture started")
     }
 
     func stopRecording() async throws -> AudioArtifact {
@@ -155,12 +170,15 @@ final class AVFoundationAudioRecorder:
         let outputURL = try await finishRecording(context: context)
 
         do {
-            return try await validateArtifact(
+            let artifact = try await validateArtifact(
                 at: outputURL,
                 context: context
             )
+            AppLog.capture.info("Capture finalized successfully")
+            return artifact
         } catch {
             fileStore.delete(outputURL)
+            AppLog.capture.error("Capture finalization failed")
             throw error
         }
     }
@@ -216,6 +234,31 @@ final class AVFoundationAudioRecorder:
         }
         fileStore.delete(context.outputURL)
         cancelledSessionIdentifiers.remove(sessionIdentifier)
+        AppLog.capture.notice("Capture cancelled synchronously")
+    }
+
+    func shutdownImmediately(sessionIdentifier: UUID) {
+        guard
+            let context,
+            context.sessionIdentifier == sessionIdentifier
+        else {
+            if preparingSessionIdentifiers.contains(sessionIdentifier) {
+                cancelledSessionIdentifiers.insert(sessionIdentifier)
+            }
+            return
+        }
+
+        self.context = nil
+        removeFailureObservers(from: context)
+        startContinuation?.resume(throwing: CancellationError())
+        startContinuation = nil
+        finishContinuation?.resume(throwing: CancellationError())
+        finishContinuation = nil
+        isExpectedFinish = false
+        fileStore.delete(context.outputURL)
+        AppLog.capture.notice(
+            "Capture resources released to process termination"
+        )
     }
 
     nonisolated func fileOutput(
@@ -457,6 +500,9 @@ final class AVFoundationAudioRecorder:
         }
 
         candidate.isHandlingUnexpectedFailure = true
+        AppLog.capture.error(
+            "Capture received an unexpected termination signal"
+        )
 
         if candidate.output.isRecording {
             captureQueue.async {
