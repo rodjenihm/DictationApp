@@ -320,6 +320,28 @@ struct ConfigurationView: View {
             .disabled(viewModel.isValidating)
 
             if viewModel.postProcessingEnabled {
+                if
+                    let attentionMessage =
+                        viewModel.postProcessingAttentionMessage
+                {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(
+                            "Needs Attention",
+                            systemImage:
+                                "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(.orange)
+
+                        Text(attentionMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(
+                                horizontal: false,
+                                vertical: true
+                            )
+                    }
+                }
+
                 LabeledContent("Provider") {
                     Text(ProviderID.openAI.displayName)
                 }

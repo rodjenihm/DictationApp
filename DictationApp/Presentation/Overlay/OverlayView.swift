@@ -72,7 +72,10 @@ struct OverlayView: View {
                 )
                 .buttonStyle(.bordered)
                 .focusable(false)
-            case .transcribedToClipboard, .noSpeech:
+            case
+                .transcribedToClipboard,
+                .rawTranscriptFallback,
+                .noSpeech:
                 EmptyView()
             default:
                 Button("Cancel", role: .cancel, action: onCancel)
@@ -106,6 +109,11 @@ struct OverlayView: View {
                 .foregroundStyle(.green)
                 .font(.title3)
                 .accessibilityHidden(true)
+        case .rawTranscriptFallback:
+            Image(systemName: "text.badge.exclamationmark")
+                .foregroundStyle(.orange)
+                .font(.title3)
+                .accessibilityHidden(true)
         case .noSpeech:
             Image(systemName: "waveform.slash")
                 .foregroundStyle(.secondary)
@@ -125,7 +133,11 @@ struct OverlayView: View {
                 .foregroundStyle(.secondary)
                 .font(.title3)
                 .accessibilityHidden(true)
-        case .preparing, .finalizing, .transcribing:
+        case
+            .preparing,
+            .finalizing,
+            .transcribing,
+            .postProcessing:
             ProgressView()
                 .controlSize(.small)
                 .accessibilityLabel("Working")
@@ -151,8 +163,12 @@ struct OverlayView: View {
             "Captured locally (\(formatDuration(duration)))"
         case .transcribing:
             "Transcribing recording…"
+        case .postProcessing:
+            "Cleaning up transcript…"
         case .transcribedToClipboard:
             "Transcript copied"
+        case .rawTranscriptFallback:
+            "Raw transcript copied"
         case .noSpeech:
             "No speech detected"
         case .transcriptionFailed:
@@ -180,8 +196,12 @@ struct OverlayView: View {
             "The local recording will be discarded"
         case .transcribing(let providerName):
             "Uploading completed audio to \(providerName)"
+        case .postProcessing(let providerName):
+            "Sending the raw transcript to \(providerName)"
         case .transcribedToClipboard:
             "Paste the transcript manually"
+        case .rawTranscriptFallback(let message):
+            message
         case .noSpeech:
             "The clipboard was left unchanged"
         case .transcriptionFailed(let message, _):
@@ -204,7 +224,8 @@ struct OverlayView: View {
             .tooShort,
             .failed,
             .transcriptionFailed,
-            .captureFailed:
+            .captureFailed,
+            .rawTranscriptFallback:
             .orange
         default:
             .secondary

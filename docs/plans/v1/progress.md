@@ -16,8 +16,8 @@ This file is the durable handoff record between implementation sessions.
 | 5. Non-activating overlay and cancellation-safe cleanup | Complete | Signed Debug and Release builds, non-activating two-display overlay behavior, menu/overlay/Escape cancellation, Escape conflict rollback/non-propagation, immediate cross-state cleanup, and startup orphan removal verified |
 | 6. Provider-neutral completed-file OpenAI transcription | Complete | Signed Debug and Release builds, provider/retry and coordinator harnesses, both live curated models, Automatic/explicit language, clipboard/no-speech behavior, retained Retry/Discard, cancellation, and cleanup verified |
 | 7. Recoverable capture failures and configuration repair | Complete | Signed Debug and Release builds, recoverable-partial state/cleanup harness, transactional repair harness, permanent-provider classification harness, and retained-snapshot invariants verified |
-| 8. Independent optional OpenAI post-processing and raw fallback | Next | — |
-| 9. Clipboard preservation and Accessibility insertion | Pending | — |
+| 8. Independent optional OpenAI post-processing and raw fallback | Complete | Signed Debug and Release builds, provider/coordinator/configuration harnesses, both live curated cleanup models, disabled bypass, clipboard output, fallback timing, health-state skipping/clearing, cancellation, and cleanup verified |
+| 9. Clipboard preservation and Accessibility insertion | Next | — |
 | 10. Cross-stage cancellation and state-machine hardening | Pending | — |
 | 11. Final v1 integration and polish | Pending | — |
 
@@ -244,6 +244,30 @@ Manual verification limitation:
 
 - A physical active-input disconnect was not performed on the user's current audio hardware. The notification/delegate recovery paths compile and their outcome handling is harness-verified; repeat the real hardware disconnect check during final Slice 11 integration.
 
+### Slice 8 — Independent optional OpenAI post-processing and raw fallback
+
+Implemented:
+
+- Added provider-neutral post-processing configuration, request, and provider contracts.
+- Added a centralized output policy that trims only external whitespace, preserves internal paragraphs, bounds visible output length, derives a 64–4096 Responses token budget, and rejects empty or structurally implausible cleanup output.
+- Added an OpenAI Responses adapter with per-operation Keychain resolution, immutable cleanup instructions, JSON-serialized untrusted transcript input, explicit empty tools, `store:false`, a sixty-second timeout, curated/custom model mapping, ordered completed-response `output_text` extraction, and the shared three-attempt retry/failure policy.
+- Extended the immutable-session coordinator pipeline to delete audio after successful transcription, bypass cleanup when disabled, publish cancellable cleanup progress when enabled, copy validated cleanup output, and use a 2.5-second cue-free raw-transcript fallback for every cleanup failure.
+- Preserved session-generation checks across provider completion, output validation, clipboard writes, cancellation, and fallback acknowledgements.
+- Added non-persisted provider/model health tracking so known configuration failures skip matching future requests, while successful enabled-cleanup credential/model validation clears attention and unrelated Settings saves do not.
+- Added cleanup progress, raw fallback, and Needs Attention presentation to the overlay, menu status, and Settings without repair dialogs, retry actions, prompts, presets, or insertion behavior.
+
+Verified:
+
+- Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
+- A temporary loopback provider harness verified the direct `/v1/responses` request shape, authorization presence, immutable instructions, JSON data input, `store:false`, empty tools, curated model mapping, character/token bounds, ordered completed-response output extraction, three-attempt transient retry, configuration non-retry, and structural output rejection.
+- A temporary coordinator harness verified disabled bypass, cleaned clipboard success, invalid-output and provider raw fallback, the 2.5-second fallback state, no fallback failure cue, audio deletion before cleanup, known-bad configuration skipping, validation-based health clearing, and cancellation guards against late clipboard writes.
+- A temporary configuration harness verified enabled-cleanup validation on credential, enablement, and curated-model changes; successful clearing of Needs Attention; and no validation or clearing for unrelated Settings changes.
+- Live OpenAI adapter checks validated both `gpt-5-mini` and `gpt-5-nano` independently using the existing Keychain credential without printing the key or transcripts. The Responses token budget was adjusted to reserve reasoning tokens while retaining the output policy's hard character limit.
+- The final signed app completed real recordings with cleanup disabled and with each curated cleanup model while retaining `gpt-4o-transcribe`; every case replaced a clipboard marker, returned to Ready, and left no recording artifact.
+- The original enabled/`gpt-5-mini` configuration and pre-verification clipboard content were restored.
+- Temporary harness sources, executables, module caches, signed build products, and logs were removed; repository checks found no Derived Data, result bundles, credential-like API-key values, transcripts, or unrelated changes.
+
 ## Session handoff rules
 
 1. Read the specification, implementation plan, and this file before changing code.
@@ -256,4 +280,4 @@ Manual verification limitation:
 
 ## Next action
 
-Implement **Slice 8 — Independent optional OpenAI post-processing and raw fallback**.
+Implement **Slice 9 — Clipboard preservation and Accessibility insertion**.

@@ -10,6 +10,9 @@ final class DictationCoordinator: ObservableObject {
     private let permissionService: any MicrophonePermissionServicing
     private let fileStore: RecordingFileStore
     private let transcriptionProvider: any TranscriptionProvider
+    private let postProcessingProvider: any PostProcessingProvider
+    private let postProcessingRuntimeHealth:
+        PostProcessingRuntimeHealth
     private let clipboardWriter: any TranscriptClipboardWriting
     private let clock = ContinuousClock()
 
@@ -28,6 +31,8 @@ final class DictationCoordinator: ObservableObject {
         permissionService: any MicrophonePermissionServicing,
         fileStore: RecordingFileStore,
         transcriptionProvider: any TranscriptionProvider,
+        postProcessingProvider: any PostProcessingProvider,
+        postProcessingRuntimeHealth: PostProcessingRuntimeHealth,
         clipboardWriter: any TranscriptClipboardWriting
     ) {
         self.recorder = recorder
@@ -35,6 +40,9 @@ final class DictationCoordinator: ObservableObject {
         self.permissionService = permissionService
         self.fileStore = fileStore
         self.transcriptionProvider = transcriptionProvider
+        self.postProcessingProvider = postProcessingProvider
+        self.postProcessingRuntimeHealth =
+            postProcessingRuntimeHealth
         self.clipboardWriter = clipboardWriter
 
         self.recorder.onUnexpectedCaptureFailure = { [weak self] outcome in
@@ -51,7 +59,9 @@ final class DictationCoordinator: ObservableObject {
             .finalizing,
             .completed,
             .transcribing,
+            .postProcessing,
             .transcribedToClipboard,
+            .rawTranscriptFallback,
             .noSpeech,
             .transcriptionFailed,
             .captureFailed,
@@ -64,7 +74,11 @@ final class DictationCoordinator: ObservableObject {
 
     var canCancel: Bool {
         switch state {
-        case .idle, .transcribedToClipboard, .noSpeech:
+        case
+            .idle,
+            .transcribedToClipboard,
+            .rawTranscriptFallback,
+            .noSpeech:
             false
         case
             .preparing,
@@ -72,6 +86,7 @@ final class DictationCoordinator: ObservableObject {
             .finalizing,
             .completed,
             .transcribing,
+            .postProcessing,
             .transcriptionFailed,
             .captureFailed,
             .tooShort,
@@ -494,10 +509,10 @@ final class DictationCoordinator: ObservableObject {
                     sessionIdentifier: session.identifier
                 )
             } else {
-                clipboardWriter.write(normalizedTranscript)
-                state = .transcribedToClipboard
-                await returnToIdle(
-                    after: 1.2,
+                await deliverTranscript(
+                    normalizedTranscript,
+                    configuration:
+                        session.effectiveConfiguration,
                     sessionIdentifier: session.identifier
                 )
             }
@@ -534,6 +549,160 @@ final class DictationCoordinator: ObservableObject {
                     message: "The recording could not be transcribed."
                 ),
                 session: session
+            )
+        }
+    }
+
+    private func deliverTranscript(
+        _ rawTranscript: String,
+        configuration: SessionConfiguration,
+        sessionIdentifier: UUID
+    ) async {
+        guard sessionID == sessionIdentifier else {
+            return
+        }
+
+        guard configuration.postProcessingMode == .enabled else {
+            await copyTranscript(
+                rawTranscript,
+                rawFallbackMessage: nil,
+                sessionIdentifier: sessionIdentifier
+            )
+            return
+        }
+
+        let postProcessingConfiguration =
+            PostProcessingConfiguration(
+                sessionConfiguration: configuration
+            )
+
+        if postProcessingRuntimeHealth.shouldSkip(
+            postProcessingConfiguration
+        ) {
+            await copyTranscript(
+                rawTranscript,
+                rawFallbackMessage:
+                    "Cleanup needs attention. The raw transcript was copied.",
+                sessionIdentifier: sessionIdentifier
+            )
+            return
+        }
+
+        guard
+            configuration.postProcessingProvider
+                == postProcessingProvider.providerID
+        else {
+            let message =
+                "The configured post-processing provider is unavailable."
+            postProcessingRuntimeHealth.markNeedsAttention(
+                postProcessingConfiguration,
+                message: message
+            )
+            await copyTranscript(
+                rawTranscript,
+                rawFallbackMessage:
+                    "Cleanup was unavailable. The raw transcript was copied.",
+                sessionIdentifier: sessionIdentifier
+            )
+            return
+        }
+
+        state = .postProcessing(
+            configuration.postProcessingProvider
+        )
+
+        do {
+            let output = try await postProcessingProvider.process(
+                PostProcessingRequest(
+                    rawTranscript: rawTranscript,
+                    model: configuration.postProcessingModel
+                )
+            )
+
+            guard sessionID == sessionIdentifier else {
+                return
+            }
+
+            let validatedOutput =
+                try PostProcessingOutputPolicy.validatedOutput(
+                    output,
+                    rawTranscript: rawTranscript
+                )
+
+            await copyTranscript(
+                validatedOutput,
+                rawFallbackMessage: nil,
+                sessionIdentifier: sessionIdentifier
+            )
+        } catch let failure as ProviderOperationFailure {
+            guard sessionID == sessionIdentifier else {
+                return
+            }
+
+            if failure.isConfigurationFailure {
+                postProcessingRuntimeHealth.markNeedsAttention(
+                    postProcessingConfiguration,
+                    message:
+                        failure.errorDescription
+                        ?? "Post-processing configuration needs attention."
+                )
+            }
+
+            await copyTranscript(
+                rawTranscript,
+                rawFallbackMessage:
+                    "Cleanup was unavailable. The raw transcript was copied.",
+                sessionIdentifier: sessionIdentifier
+            )
+        } catch is CancellationError {
+            guard sessionID == sessionIdentifier else {
+                return
+            }
+
+            await copyTranscript(
+                rawTranscript,
+                rawFallbackMessage:
+                    "Cleanup was unavailable. The raw transcript was copied.",
+                sessionIdentifier: sessionIdentifier
+            )
+        } catch {
+            guard sessionID == sessionIdentifier else {
+                return
+            }
+
+            await copyTranscript(
+                rawTranscript,
+                rawFallbackMessage:
+                    "Cleanup was unavailable. The raw transcript was copied.",
+                sessionIdentifier: sessionIdentifier
+            )
+        }
+    }
+
+    private func copyTranscript(
+        _ transcript: String,
+        rawFallbackMessage: String?,
+        sessionIdentifier: UUID
+    ) async {
+        guard sessionID == sessionIdentifier else {
+            return
+        }
+
+        clipboardWriter.write(transcript)
+
+        if let rawFallbackMessage {
+            state = .rawTranscriptFallback(
+                rawFallbackMessage
+            )
+            await returnToIdle(
+                after: 2.5,
+                sessionIdentifier: sessionIdentifier
+            )
+        } else {
+            state = .transcribedToClipboard
+            await returnToIdle(
+                after: 1.2,
+                sessionIdentifier: sessionIdentifier
             )
         }
     }

@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
     private let permissionService = PermissionService()
     private let shortcutService = GlobalShortcutService()
     private let recordingFileStore = RecordingFileStore()
+    private let postProcessingRuntimeHealth =
+        PostProcessingRuntimeHealth()
     private var hasStarted = false
     private var sessionStateCancellable: AnyCancellable?
 
@@ -30,12 +32,20 @@ final class AppModel: ObservableObject {
         credentialStore: credentialStore
     )
 
+    private lazy var postProcessingProvider =
+        OpenAIPostProcessingProvider(
+            credentialStore: credentialStore
+        )
+
     private lazy var dictationCoordinator = DictationCoordinator(
         recorder: audioRecorder,
         soundCuePlayer: SoundCuePlayer(),
         permissionService: permissionService,
         fileStore: recordingFileStore,
         transcriptionProvider: transcriptionProvider,
+        postProcessingProvider: postProcessingProvider,
+        postProcessingRuntimeHealth:
+            postProcessingRuntimeHealth,
         clipboardWriter: PasteboardTranscriptWriter()
     )
 
@@ -45,7 +55,9 @@ final class AppModel: ObservableObject {
             credentialStore: credentialStore,
             validator: validator,
             permissionService: permissionService,
-            shortcutService: shortcutService
+            shortcutService: shortcutService,
+            postProcessingRuntimeHealth:
+                postProcessingRuntimeHealth
         )
         viewModel.onConfigurationChanged = { [weak self] in
             self?.refreshStatus()
@@ -153,7 +165,9 @@ final class AppModel: ObservableObject {
             .finalizing,
             .completed,
             .transcribing,
+            .postProcessing,
             .transcribedToClipboard,
+            .rawTranscriptFallback,
             .noSpeech,
             .transcriptionFailed,
             .captureFailed,
@@ -242,10 +256,20 @@ final class AppModel: ObservableObject {
             return
         }
 
-        statusText =
-            hasStarted && shortcutService.activeShortcut == nil
-                ? "Shortcut unavailable"
-                : "Ready"
+        if hasStarted && shortcutService.activeShortcut == nil {
+            statusText = "Shortcut unavailable"
+        } else if
+            configuration.postProcessingMode == .enabled,
+            postProcessingRuntimeHealth.shouldSkip(
+                PostProcessingConfiguration(
+                    appConfiguration: configuration
+                )
+            )
+        {
+            statusText = "Ready — cleanup needs attention"
+        } else {
+            statusText = "Ready"
+        }
     }
 
     private func apply(_ state: DictationSessionState) {
@@ -313,6 +337,17 @@ final class AppModel: ObservableObject {
             overlayWindowController.present(
                 .transcribing(providerName: provider.displayName)
             )
+        case .postProcessing(let provider):
+            statusText =
+                "Cleaning up transcript with \(provider.displayName)…"
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = true
+            overlayWindowController.present(
+                .postProcessing(
+                    providerName: provider.displayName
+                )
+            )
         case .transcribedToClipboard:
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = "Transcript copied — paste manually"
@@ -320,6 +355,15 @@ final class AppModel: ObservableObject {
             isPrimaryActionEnabled = false
             canCancel = false
             overlayWindowController.present(.transcribedToClipboard)
+        case .rawTranscriptFallback(let message):
+            shortcutService.unregisterSessionCancellationShortcut()
+            statusText = message
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = false
+            canCancel = false
+            overlayWindowController.present(
+                .rawTranscriptFallback(message: message)
+            )
         case .noSpeech:
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = "No speech detected"

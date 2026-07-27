@@ -45,20 +45,31 @@ final class ConfigurationViewModel: ObservableObject {
     private let validator: any OpenAIConfigurationValidating
     private let permissionService: PermissionService
     private let shortcutService: GlobalShortcutService
+    private let postProcessingRuntimeHealth:
+        PostProcessingRuntimeHealth
     private var savedConfiguration: AppConfiguration = .default
+    private var postProcessingHealthCancellable: AnyCancellable?
 
     init(
         settingsStore: SettingsStore,
         credentialStore: any CredentialStore,
         validator: any OpenAIConfigurationValidating,
         permissionService: PermissionService,
-        shortcutService: GlobalShortcutService
+        shortcutService: GlobalShortcutService,
+        postProcessingRuntimeHealth: PostProcessingRuntimeHealth
     ) {
         self.settingsStore = settingsStore
         self.credentialStore = credentialStore
         self.validator = validator
         self.permissionService = permissionService
         self.shortcutService = shortcutService
+        self.postProcessingRuntimeHealth =
+            postProcessingRuntimeHealth
+        postProcessingHealthCancellable =
+            postProcessingRuntimeHealth.$attention.sink {
+                [weak self] _ in
+                self?.objectWillChange.send()
+            }
         reload()
     }
 
@@ -93,6 +104,20 @@ final class ConfigurationViewModel: ObservableObject {
         }
 
         return !postProcessingEnabled || !resolvedPostProcessingModel.isEmpty
+    }
+
+    var postProcessingAttentionMessage: String? {
+        guard
+            savedConfiguration.postProcessingMode == .enabled
+        else {
+            return nil
+        }
+
+        return postProcessingRuntimeHealth.message(
+            for: PostProcessingConfiguration(
+                appConfiguration: savedConfiguration
+            )
+        )
     }
 
     func prepareForPresentation(
@@ -212,6 +237,8 @@ final class ConfigurationViewModel: ObservableObject {
 
             let configuration = try makeConfiguration()
             var performedValidation = false
+            var validatedPostProcessingConfiguration:
+                PostProcessingConfiguration?
 
             let transcriptionCustomChanged =
                 configuration.transcriptionModel.isCustom
@@ -230,9 +257,10 @@ final class ConfigurationViewModel: ObservableObject {
                 performedValidation = true
             }
 
-            let postProcessingCustomChanged =
-                configuration.postProcessingModel.isCustom
-                && configuration.postProcessingModel
+            let postProcessingConfigurationChanged =
+                configuration.postProcessingProvider
+                    != savedConfiguration.postProcessingProvider
+                || configuration.postProcessingModel
                     != savedConfiguration.postProcessingModel
 
             if
@@ -241,7 +269,7 @@ final class ConfigurationViewModel: ObservableObject {
                         isReplacingCredential
                             || !credentialExists
                             || savedConfiguration.postProcessingMode == .disabled
-                            || postProcessingCustomChanged
+                            || postProcessingConfigurationChanged
                     )
             {
                 try await validator.validatePostProcessing(
@@ -249,6 +277,10 @@ final class ConfigurationViewModel: ObservableObject {
                     model: configuration.postProcessingModel.identifier
                 )
                 performedValidation = true
+                validatedPostProcessingConfiguration =
+                    PostProcessingConfiguration(
+                        appConfiguration: configuration
+                    )
             }
 
             if isReplacingCredential {
@@ -262,6 +294,11 @@ final class ConfigurationViewModel: ObservableObject {
             )
 
             savedConfiguration = configuration
+            if let validatedPostProcessingConfiguration {
+                postProcessingRuntimeHealth.clearAfterValidation(
+                    validatedPostProcessingConfiguration
+                )
+            }
             hasCompletedFirstRun = true
             credentialExists = true
             candidateAPIKey = ""

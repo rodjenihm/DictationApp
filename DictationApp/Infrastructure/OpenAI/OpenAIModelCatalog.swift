@@ -137,4 +137,15 @@ enum OpenAIModelCatalog {
             languages.first { $0.id == identifier }?.id
         }
     }
+
+    static func postProcessingAPIIdentifier(
+        for selection: ModelSelection
+    ) -> String? {
+        switch selection.normalized {
+        case .curated(let identifier):
+            postProcessingModels.first { $0.id == identifier }?.id
+        case .custom(let identifier):
+            identifier.isEmpty ? nil : identifier
+        }
+    }
 }
