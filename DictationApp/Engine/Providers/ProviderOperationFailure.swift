@@ -4,6 +4,10 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
     case cancelled
     case transient(message: String, retryAfter: TimeInterval?)
     case configuration(message: String)
+    case scopedConfiguration(
+        kind: ProviderConfigurationIssueKind,
+        message: String
+    )
     case operation(message: String)
 
     var errorDescription: String? {
@@ -12,6 +16,7 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
             "The provider operation was cancelled."
         case .transient(let message, _),
              .configuration(let message),
+             .scopedConfiguration(_, let message),
              .operation(let message):
             message
         }
@@ -21,7 +26,21 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
         if case .configuration = self {
             return true
         }
+        if case .scopedConfiguration = self {
+            return true
+        }
         return false
+    }
+
+    var configurationIssueKind: ProviderConfigurationIssueKind? {
+        switch self {
+        case .configuration:
+            .unknown
+        case .scopedConfiguration(let kind, _):
+            kind
+        case .cancelled, .transient, .operation:
+            nil
+        }
     }
 
     var retryDelay: TimeInterval? {
@@ -44,7 +63,7 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
             "cancelled"
         case .transient:
             "transient"
-        case .configuration:
+        case .configuration, .scopedConfiguration:
             "configuration"
         case .operation:
             "operation"

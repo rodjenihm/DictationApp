@@ -30,8 +30,14 @@ struct AccessibleActionButton: NSViewRepresentable {
         control.isDefaultAction = isDefault
         control.keyEquivalent = isDefault ? "\r" : ""
         control.keyEquivalentModifierMask = []
-        control.bezelColor = isDefault ? .controlAccentColor : nil
-        control.contentTintColor = isDefault ? .white : nil
+        control.bezelColor =
+            isDefault && environmentIsEnabled
+            ? .controlAccentColor
+            : nil
+        control.contentTintColor =
+            isDefault && environmentIsEnabled
+            ? .white
+            : nil
         control.setAccessibilityLabel(accessibilityLabel)
         control.setAccessibilityHelp(accessibilityHelp)
     }

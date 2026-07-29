@@ -85,7 +85,8 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
                     for: selection
                 )
         else {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .model,
                 message:
                     "The post-processing model is not configured correctly."
             )
@@ -99,7 +100,8 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
         do {
             guard let savedCredential = try credentialStore.readCredential()
             else {
-                throw ProviderOperationFailure.configuration(
+                throw ProviderOperationFailure.scopedConfiguration(
+                    kind: .authentication,
                     message: "The OpenAI API key is missing."
                 )
             }
@@ -107,13 +109,15 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
         } catch let failure as ProviderOperationFailure {
             throw failure
         } catch {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .providerSetup,
                 message: "The OpenAI API key could not be read from Keychain."
             )
         }
 
         guard !credential.isEmpty else {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .authentication,
                 message: "The OpenAI API key is missing."
             )
         }
@@ -288,11 +292,13 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
 
         switch response.statusCode {
         case 401:
-            return .configuration(
+            return .scopedConfiguration(
+                kind: .authentication,
                 message: "OpenAI rejected the saved API key."
             )
         case 403, 404:
-            return .configuration(
+            return .scopedConfiguration(
+                kind: .model,
                 message:
                     "The selected post-processing model is unavailable for this API key."
             )
@@ -317,7 +323,12 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
                             && parameter == "model"
                     )
             {
-                return .configuration(
+                let kind: ProviderConfigurationIssueKind =
+                    type == "invalid_api_key"
+                    ? .authentication
+                    : .model
+                return .scopedConfiguration(
+                    kind: kind,
                     message:
                         "OpenAI rejected the saved post-processing configuration."
                 )

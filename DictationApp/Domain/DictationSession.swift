@@ -80,6 +80,11 @@ struct TranscriptionRepair: Equatable, Sendable {
     let model: ModelSelection
 }
 
+struct TranscriptionRepairContext: Equatable, Sendable {
+    let recordingProfile: RecordingProfile
+    let language: LanguageSelection
+}
+
 struct AudioArtifact: Equatable, Sendable {
     let url: URL
     let duration: TimeInterval
@@ -156,6 +161,17 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
 struct TranscriptionFailureState: Equatable, Sendable {
     let message: String
     let isConfigurationFailure: Bool
+    let configurationIssueKind: ProviderConfigurationIssueKind?
+
+    init(
+        message: String,
+        isConfigurationFailure: Bool,
+        configurationIssueKind: ProviderConfigurationIssueKind? = nil
+    ) {
+        self.message = message
+        self.isConfigurationFailure = isConfigurationFailure
+        self.configurationIssueKind = configurationIssueKind
+    }
 }
 
 struct RecoverableCaptureFailureState: Equatable, Sendable {

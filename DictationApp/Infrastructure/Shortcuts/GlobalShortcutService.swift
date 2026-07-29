@@ -97,17 +97,7 @@ final class GlobalShortcutService {
     }
 
     func replaceShortcut(with shortcut: GlobalShortcut) throws {
-        guard shortcut.hasStandardModifier else {
-            let error = GlobalShortcutRegistrationError.missingModifier
-            registrationError = error
-            throw error
-        }
-
-        guard !isReservedBySystem(shortcut) else {
-            let error = GlobalShortcutRegistrationError.reservedBySystem
-            registrationError = error
-            throw error
-        }
+        try validateCandidate(shortcut)
 
         if activeShortcut == shortcut {
             registrationError = nil
@@ -156,6 +146,16 @@ final class GlobalShortcutService {
         activeShortcut = shortcut
         activeHotKeyID = candidateID
         registrationError = nil
+    }
+
+    func validateCandidate(_ shortcut: GlobalShortcut) throws {
+        guard shortcut.hasStandardModifier else {
+            throw GlobalShortcutRegistrationError.missingModifier
+        }
+
+        guard !isReservedBySystem(shortcut) else {
+            throw GlobalShortcutRegistrationError.reservedBySystem
+        }
     }
 
     func registerSessionCancellationShortcut() throws {

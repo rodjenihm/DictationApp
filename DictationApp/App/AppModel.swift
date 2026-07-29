@@ -21,8 +21,8 @@ final class AppModel: ObservableObject {
     private let permissionService = PermissionService()
     private let shortcutService = GlobalShortcutService()
     private let recordingFileStore = RecordingFileStore()
-    private let postProcessingRuntimeHealth =
-        PostProcessingRuntimeHealth()
+    private let providerRuntimeHealth =
+        ProviderRuntimeHealthStore()
     private var hasStarted = false
     private var sessionStateCancellable: AnyCancellable?
 
@@ -39,15 +39,32 @@ final class AppModel: ObservableObject {
             credentialStore: credentialStore
         )
 
+    private lazy var openAISettingsModule =
+        OpenAIProviderSettingsModule(
+            credentialStore: credentialStore,
+            validator: validator,
+            runtimeHealth: providerRuntimeHealth
+        )
+
+    private lazy var providerRegistry = ProviderRegistry(
+        registrations: [
+            ProviderRegistry.Registration(
+                settings: AnyProviderSettingsModule(
+                    openAISettingsModule
+                ),
+                transcriptionProvider: transcriptionProvider,
+                postProcessingProvider: postProcessingProvider
+            ),
+        ]
+    )
+
     private lazy var dictationCoordinator = DictationCoordinator(
         recorder: audioRecorder,
         soundCuePlayer: SoundCuePlayer(),
         permissionService: permissionService,
         fileStore: recordingFileStore,
-        transcriptionProvider: transcriptionProvider,
-        postProcessingProvider: postProcessingProvider,
-        postProcessingRuntimeHealth:
-            postProcessingRuntimeHealth,
+        providerResolver: providerRegistry,
+        providerRuntimeHealth: providerRuntimeHealth,
         clipboardService: PasteboardClipboardService(),
         textInsertionService: AccessibilityTextInsertionService()
     )
@@ -55,12 +72,10 @@ final class AppModel: ObservableObject {
     private lazy var configurationViewModel: ConfigurationViewModel = {
         let viewModel = ConfigurationViewModel(
             settingsStore: settingsStore,
-            credentialStore: credentialStore,
-            validator: validator,
             permissionService: permissionService,
             shortcutService: shortcutService,
-            postProcessingRuntimeHealth:
-                postProcessingRuntimeHealth
+            providerRegistry: providerRegistry,
+            providerRuntimeHealth: providerRuntimeHealth
         )
         viewModel.onConfigurationChanged = { [weak self] in
             self?.refreshStatus()
@@ -150,17 +165,38 @@ final class AppModel: ObservableObject {
     }
 
     func showConfiguration() {
-        let mode: ConfigurationPresentationMode
+        let route: ConfigurationRoute
         if
             case .transcriptionFailed(let failure) =
                 dictationCoordinator.state,
             failure.isConfigurationFailure
         {
-            mode = .transcriptionRepair
+            configurationViewModel.setRepairContext(
+                dictationCoordinator.transcriptionRepairContext
+            )
+            route = .transcriptionRepair
+        } else if !settingsStore.load().hasCompletedFirstRun {
+            configurationViewModel.setRepairContext(nil)
+            route = .firstRun
+        } else if
+            providerRuntimeHealth.message(
+                for: PostProcessingConfiguration(
+                    appConfiguration:
+                        settingsStore.load().configuration
+                )
+            ) != nil
+        {
+            configurationViewModel.setRepairContext(nil)
+            route = .destination(.postProcessing)
         } else {
-            mode = .full
+            configurationViewModel.setRepairContext(nil)
+            route = .ordinary
         }
-        configurationWindowController.showConfiguration(mode: mode)
+        configurationWindowController.showConfiguration(route: route)
+    }
+
+    func showConfiguration(route: ConfigurationRoute) {
+        configurationWindowController.showConfiguration(route: route)
     }
 
     func stop() {
@@ -240,14 +276,27 @@ final class AppModel: ObservableObject {
 
         let storedSettings = settingsStore.load()
         let configuration = storedSettings.configuration
-        let hasCredential = (try? credentialStore.credentialExists()) ?? false
+        let readiness = providerRegistry.readiness(
+            for: configuration.transcriptionProvider,
+            capability: .transcription
+        )
 
-        guard hasCredential && configuration.isStructurallyValid else {
+        guard isUsable(readiness) else {
             AppLog.session.notice(
                 "Dictation start redirected to required setup"
             )
             statusText = "Setup required"
-            showConfiguration()
+            showConfiguration(
+                route: .provider(configuration.transcriptionProvider)
+            )
+            return
+        }
+        guard configuration.isStructurallyValid else {
+            AppLog.session.notice(
+                "Dictation start redirected to transcription settings"
+            )
+            statusText = "Transcription configuration needs attention"
+            showConfiguration(route: .destination(.transcription))
             return
         }
 
@@ -282,8 +331,6 @@ final class AppModel: ObservableObject {
         }
 
         let configuration = settingsStore.load().configuration
-        let hasCredential = (try? credentialStore.credentialExists()) ?? false
-
         primaryActionTitle = "Start Dictation"
         isPrimaryActionEnabled = true
         canCancel = false
@@ -294,7 +341,15 @@ final class AppModel: ObservableObject {
         canDiscardPartial = false
         canDismissDeliveryStatus = false
 
-        guard hasCredential && configuration.isStructurallyValid else {
+        let readiness = providerRegistry.readiness(
+            for: configuration.transcriptionProvider,
+            capability: .transcription
+        )
+
+        guard
+            isUsable(readiness),
+            configuration.isStructurallyValid
+        else {
             statusText = "Setup required"
             return
         }
@@ -303,7 +358,7 @@ final class AppModel: ObservableObject {
             statusText = "Shortcut unavailable"
         } else if
             configuration.postProcessingMode == .enabled,
-            postProcessingRuntimeHealth.shouldSkip(
+            providerRuntimeHealth.shouldSkip(
                 PostProcessingConfiguration(
                     appConfiguration: configuration
                 )
@@ -534,6 +589,19 @@ final class AppModel: ObservableObject {
             .cancelled,
             .failed:
             return .readOnly
+        }
+    }
+
+    private func isUsable(_ readiness: ProviderReadiness) -> Bool {
+        switch readiness.state {
+        case .configured:
+            true
+        case
+            .setupRequired,
+            .attentionRequired,
+            .pendingValidation,
+            .willDisconnect:
+            false
         }
     }
 }

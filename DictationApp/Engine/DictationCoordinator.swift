@@ -10,10 +10,9 @@ final class DictationCoordinator: ObservableObject {
     private let soundCuePlayer: SoundCuePlayer
     private let permissionService: any MicrophonePermissionServicing
     private let fileStore: RecordingFileStore
-    private let transcriptionProvider: any TranscriptionProvider
-    private let postProcessingProvider: any PostProcessingProvider
-    private let postProcessingRuntimeHealth:
-        PostProcessingRuntimeHealth
+    private let providerResolver: any ProviderRuntimeResolving
+    private let providerRuntimeHealth:
+        ProviderRuntimeHealthStore
     private let clipboardService: any TranscriptClipboardServicing
     private let textInsertionService: any TextInsertionServicing
     private let clock = ContinuousClock()
@@ -34,9 +33,8 @@ final class DictationCoordinator: ObservableObject {
         soundCuePlayer: SoundCuePlayer,
         permissionService: any MicrophonePermissionServicing,
         fileStore: RecordingFileStore,
-        transcriptionProvider: any TranscriptionProvider,
-        postProcessingProvider: any PostProcessingProvider,
-        postProcessingRuntimeHealth: PostProcessingRuntimeHealth,
+        providerResolver: any ProviderRuntimeResolving,
+        providerRuntimeHealth: ProviderRuntimeHealthStore,
         clipboardService: any TranscriptClipboardServicing,
         textInsertionService: any TextInsertionServicing
     ) {
@@ -44,10 +42,8 @@ final class DictationCoordinator: ObservableObject {
         self.soundCuePlayer = soundCuePlayer
         self.permissionService = permissionService
         self.fileStore = fileStore
-        self.transcriptionProvider = transcriptionProvider
-        self.postProcessingProvider = postProcessingProvider
-        self.postProcessingRuntimeHealth =
-            postProcessingRuntimeHealth
+        self.providerResolver = providerResolver
+        self.providerRuntimeHealth = providerRuntimeHealth
         self.clipboardService = clipboardService
         self.textInsertionService = textInsertionService
 
@@ -110,6 +106,18 @@ final class DictationCoordinator: ObservableObject {
             .failed:
             true
         }
+    }
+
+    var transcriptionRepairContext: TranscriptionRepairContext? {
+        guard let failedSessionContext else {
+            return nil
+        }
+        return TranscriptionRepairContext(
+            recordingProfile:
+                failedSessionContext.effectiveConfiguration.recordingProfile,
+            language:
+                failedSessionContext.effectiveConfiguration.language
+        )
     }
 
     func start(
@@ -638,11 +646,13 @@ final class DictationCoordinator: ObservableObject {
             throw CancellationError()
         }
 
-        guard
-            session.effectiveConfiguration.transcriptionProvider
-                == transcriptionProvider.providerID
+        guard let transcriptionProvider =
+            providerResolver.transcriptionProvider(
+                for: session.effectiveConfiguration.transcriptionProvider
+            )
         else {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .unavailable,
                 message:
                     "The configured transcription provider is unavailable."
             )
@@ -706,6 +716,21 @@ final class DictationCoordinator: ObservableObject {
         }
 
         failedSessionContext = session
+        if
+            let kind = failure.configurationIssueKind
+        {
+            providerRuntimeHealth.markNeedsAttention(
+                provider:
+                    session.effectiveConfiguration.transcriptionProvider,
+                capability: .transcription,
+                model:
+                    session.effectiveConfiguration.transcriptionModel,
+                kind: kind,
+                message:
+                    failure.errorDescription
+                    ?? "Transcription configuration needs attention."
+            )
+        }
         guard transition(
             to: .transcriptionFailed(
                 TranscriptionFailureState(
@@ -713,7 +738,9 @@ final class DictationCoordinator: ObservableObject {
                         failure.errorDescription
                         ?? "The recording could not be transcribed.",
                     isConfigurationFailure:
-                        failure.isConfigurationFailure
+                        failure.isConfigurationFailure,
+                    configurationIssueKind:
+                        failure.configurationIssueKind
                 )
             ),
             token: token
@@ -785,7 +812,7 @@ final class DictationCoordinator: ObservableObject {
                 sessionConfiguration: configuration
             )
 
-        if postProcessingRuntimeHealth.shouldSkip(
+        if providerRuntimeHealth.shouldSkip(
             postProcessingConfiguration
         ) {
             AppLog.providers.notice(
@@ -800,14 +827,16 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
-        guard
-            configuration.postProcessingProvider
-                == postProcessingProvider.providerID
+        guard let postProcessingProvider =
+            providerResolver.postProcessingProvider(
+                for: configuration.postProcessingProvider
+            )
         else {
             let message =
                 "The configured post-processing provider is unavailable."
-            postProcessingRuntimeHealth.markNeedsAttention(
+            providerRuntimeHealth.markNeedsAttention(
                 postProcessingConfiguration,
+                kind: .unavailable,
                 message: message
             )
             try await insertTranscript(
@@ -862,8 +891,9 @@ final class DictationCoordinator: ObservableObject {
             try requireCurrent(token)
 
             if failure.isConfigurationFailure {
-                postProcessingRuntimeHealth.markNeedsAttention(
+                providerRuntimeHealth.markNeedsAttention(
                     postProcessingConfiguration,
+                    kind: failure.configurationIssueKind ?? .unknown,
                     message:
                         failure.errorDescription
                         ?? "Post-processing configuration needs attention."

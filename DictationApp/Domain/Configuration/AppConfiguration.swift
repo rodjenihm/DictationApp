@@ -1,6 +1,13 @@
 import Foundation
 
-enum ProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
+enum ProviderID:
+    String,
+    Codable,
+    CaseIterable,
+    Hashable,
+    Identifiable,
+    Sendable
+{
     case openAI
 
     var id: String { rawValue }
@@ -69,21 +76,83 @@ enum PostProcessingMode:
 }
 
 struct AppConfiguration: Codable, Equatable, Sendable {
-    var transcriptionProvider: ProviderID
-    var transcriptionModel: ModelSelection
+    var transcription: StageConfiguration
     var language: LanguageSelection
     var postProcessingMode: PostProcessingMode
-    var postProcessingProvider: ProviderID
-    var postProcessingModel: ModelSelection
+    var postProcessing: StageConfiguration
 
     static let `default` = AppConfiguration(
-        transcriptionProvider: .openAI,
-        transcriptionModel: .curated("gpt-4o-transcribe"),
+        transcription: StageConfiguration(
+            activeProvider: .openAI,
+            modelsByProvider: [
+                .openAI: .curated("gpt-4o-transcribe"),
+            ]
+        ),
         language: .automatic,
         postProcessingMode: .disabled,
-        postProcessingProvider: .openAI,
-        postProcessingModel: .curated("gpt-5-mini")
+        postProcessing: StageConfiguration(
+            activeProvider: .openAI,
+            modelsByProvider: [
+                .openAI: .curated("gpt-5-mini"),
+            ]
+        )
     )
+
+    init(
+        transcription: StageConfiguration,
+        language: LanguageSelection,
+        postProcessingMode: PostProcessingMode,
+        postProcessing: StageConfiguration
+    ) {
+        self.transcription = transcription
+        self.language = language
+        self.postProcessingMode = postProcessingMode
+        self.postProcessing = postProcessing
+    }
+
+    init(
+        transcriptionProvider: ProviderID,
+        transcriptionModel: ModelSelection,
+        language: LanguageSelection,
+        postProcessingMode: PostProcessingMode,
+        postProcessingProvider: ProviderID,
+        postProcessingModel: ModelSelection
+    ) {
+        transcription = StageConfiguration(
+            activeProvider: transcriptionProvider,
+            modelsByProvider: [
+                transcriptionProvider: transcriptionModel,
+            ]
+        )
+        self.language = language
+        self.postProcessingMode = postProcessingMode
+        postProcessing = StageConfiguration(
+            activeProvider: postProcessingProvider,
+            modelsByProvider: [
+                postProcessingProvider: postProcessingModel,
+            ]
+        )
+    }
+
+    var transcriptionProvider: ProviderID {
+        get { transcription.activeProvider }
+        set { transcription.activeProvider = newValue }
+    }
+
+    var transcriptionModel: ModelSelection {
+        get { transcription.activeModel }
+        set { transcription.setModel(newValue, for: transcriptionProvider) }
+    }
+
+    var postProcessingProvider: ProviderID {
+        get { postProcessing.activeProvider }
+        set { postProcessing.activeProvider = newValue }
+    }
+
+    var postProcessingModel: ModelSelection {
+        get { postProcessing.activeModel }
+        set { postProcessing.setModel(newValue, for: postProcessingProvider) }
+    }
 
     var isStructurallyValid: Bool {
         !transcriptionModel.identifier.isEmpty
@@ -91,5 +160,21 @@ struct AppConfiguration: Codable, Equatable, Sendable {
                 postProcessingMode == .disabled
                     || !postProcessingModel.identifier.isEmpty
             )
+    }
+}
+
+struct StageConfiguration: Codable, Equatable, Sendable {
+    var activeProvider: ProviderID
+    var modelsByProvider: [ProviderID: ModelSelection]
+
+    var activeModel: ModelSelection {
+        modelsByProvider[activeProvider] ?? .custom("")
+    }
+
+    mutating func setModel(
+        _ model: ModelSelection,
+        for provider: ProviderID
+    ) {
+        modelsByProvider[provider] = model
     }
 }

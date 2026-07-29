@@ -2,92 +2,173 @@ import SwiftUI
 
 struct ConfigurationView: View {
     @ObservedObject var viewModel: ConfigurationViewModel
-    @State private var isConfirmingCredentialDeletion = false
+    @FocusState private var focusedField: ConfigurationField?
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            if let explanation = viewModel.sessionAccessExplanation {
+                Label(explanation, systemImage: "lock.fill")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(.quaternary.opacity(0.5))
+            } else if viewModel.presentationMode == .transcriptionRepair {
+                Label(
+                    "Repair only the transcription provider or model. The retained recording is not uploaded until Retry.",
+                    systemImage: "wrench.and.screwdriver.fill"
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.quaternary.opacity(0.5))
+            }
+
+            NavigationSplitView {
+                sidebar
+                    .navigationSplitViewColumnWidth(
+                        min: 170,
+                        ideal: 190,
+                        max: 230
+                    )
+            } detail: {
+                detail
+            }
+
+            Divider()
+            footer
+        }
+        .frame(minWidth: 760, minHeight: 620)
+        .onChange(of: viewModel.issues) {
+            focusedField = viewModel.issues.first?.field
+        }
+        .onChange(of: viewModel.transcriptionProviderChoice) {
+            viewModel.clearIssue(for: .transcriptionProvider)
+        }
+        .onChange(of: viewModel.transcriptionModelChoice) {
+            viewModel.clearIssue(for: .transcriptionModel)
+        }
+        .onChange(of: viewModel.transcriptionCustomModel) {
+            viewModel.clearIssue(for: .transcriptionModel)
+        }
+        .onChange(of: viewModel.languageCode) {
+            viewModel.clearIssue(for: .language)
+        }
+        .onChange(of: viewModel.postProcessingProviderChoice) {
+            viewModel.clearIssue(for: .postProcessingProvider)
+        }
+        .onChange(of: viewModel.postProcessingModelChoice) {
+            viewModel.clearIssue(for: .postProcessingModel)
+        }
+        .onChange(of: viewModel.postProcessingCustomModel) {
+            viewModel.clearIssue(for: .postProcessingModel)
+        }
+    }
+
+    private var sidebar: some View {
+        List(
+            SettingsDestination.allCases,
+            selection: $viewModel.selectedDestination
+        ) { destination in
+            HStack(spacing: 10) {
+                Label(
+                    destination.title,
+                    systemImage: destination.systemImage
+                )
+
+                Spacer()
+
+                if viewModel.hasIssue(in: destination) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.red)
+                        .accessibilityLabel("Contains an error")
+                } else if viewModel.isDirty(destination) {
+                    Circle()
+                        .fill(Color.accentColor)
+                        .frame(width: 7, height: 7)
+                        .accessibilityLabel("Contains unsaved changes")
+                } else if hasAttention(destination) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Needs attention")
+                }
+            }
+            .tag(destination)
+        }
+        .listStyle(.sidebar)
+        .accessibilityLabel("Settings categories")
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch viewModel.selectedDestination {
+        case .general:
+            page(
+                title: "General",
+                detail:
+                    "Permissions, shortcut, feedback, and privacy behavior."
+            ) {
+                permissionsSection
+                shortcutSection
+                feedbackSection
+                privacySection
+            }
+            .disabled(!canEdit(.general) || viewModel.isValidating)
+        case .transcription:
+            page(
+                title: "Transcription",
+                detail:
+                    "Choose how completed recordings become text."
+            ) {
+                transcriptionSection
+            }
+            .disabled(!canEdit(.transcription) || viewModel.isValidating)
+        case .postProcessing:
+            page(
+                title: "Post-processing",
+                detail:
+                    "Optionally clean punctuation and formatting."
+            ) {
+                postProcessingSection
+            }
+            .disabled(!canEdit(.postProcessing) || viewModel.isValidating)
+        case .providers:
+            providersPage
+                .disabled(!canEdit(.providers) || viewModel.isValidating)
+        }
+    }
+
+    private func page<Content: View>(
+        title: String,
+        detail: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pageHeader(title: title, detail: detail)
 
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let explanation =
-                        viewModel.sessionAccessExplanation
-                    {
-                        Label(
-                            explanation,
-                            systemImage: "lock.fill"
-                        )
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(
-                            horizontal: false,
-                            vertical: true
-                        )
-                        .accessibilityLabel(
-                            "Settings locked. \(explanation)"
-                        )
-                    }
-
-                    if viewModel.presentationMode == .full {
-                        permissionsSection
-                        shortcutSection
-                        feedbackSection
-                    }
-                    credentialSection
-                    transcriptionSection
-                    if viewModel.presentationMode == .full {
-                        postProcessingSection
-                    }
-                    resultMessage
+                VStack(alignment: .leading, spacing: 18) {
+                    content()
                 }
-                .disabled(!viewModel.canEditPresentedSettings)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
             }
-
-            Divider()
-
-            footer
-        }
-        .frame(minWidth: 660, minHeight: 700)
-        .confirmationDialog(
-            "Delete the saved OpenAI API key?",
-            isPresented: $isConfirmingCredentialDeletion
-        ) {
-            Button("Delete API Key", role: .destructive) {
-                viewModel.deleteCredential()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "Transcription will remain unavailable until another key is " +
-                    "validated and saved."
-            )
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "waveform.badge.mic")
-                .font(.system(size: 34))
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(
-                    headerTitle
-                )
+    private func pageHeader(title: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
                 .font(.title2.weight(.semibold))
-
-                Text(
-                    headerDetail
-                )
+            Text(detail)
                 .foregroundStyle(.secondary)
-            }
-
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
     }
 
@@ -97,49 +178,16 @@ struct ConfigurationView: View {
                 HStack(spacing: 10) {
                     permissionStatusLabel(
                         microphoneStatusTitle,
-                        systemImage: microphoneStatusSystemImage,
-                        color: microphoneStatusColor
+                        granted:
+                            viewModel.microphoneStatus == .granted
                     )
-
-                    switch viewModel.microphoneStatus {
-                    case .notDetermined:
-                        AccessibleActionButton(
-                            title: "Enable",
-                            accessibilityLabel:
-                                "Enable microphone access",
-                            accessibilityHelp:
-                                "Requests permission from macOS."
-                        ) {
-                            Task {
-                                await viewModel.enableMicrophone()
-                            }
-                        }
-                    case .denied, .restricted:
-                        AccessibleActionButton(
-                            title: "Open System Settings",
-                            accessibilityLabel:
-                                "Open Microphone settings",
-                            accessibilityHelp:
-                                "Opens the macOS Microphone privacy settings."
-                        ) {
-                            viewModel.openMicrophoneSettings()
-                        }
-                    case .granted:
-                        EmptyView()
-                    }
+                    microphoneAction
                 }
             }
 
-            Text(
-                microphonePermissionExplanation
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(
-                "Microphone status: \(microphoneStatusTitle). " +
-                    microphonePermissionExplanation
-            )
+            Text(microphonePermissionExplanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Divider()
 
@@ -147,106 +195,99 @@ struct ConfigurationView: View {
                 HStack(spacing: 10) {
                     permissionStatusLabel(
                         accessibilityStatusTitle,
-                        systemImage: accessibilityStatusSystemImage,
-                        color: accessibilityStatusColor
+                        granted:
+                            viewModel.accessibilityStatus == .granted
                     )
-
-                    if viewModel.accessibilityStatus == .notGranted {
-                        AccessibleActionButton(
-                            title: "Enable",
-                            accessibilityLabel:
-                                "Enable Accessibility access",
-                            accessibilityHelp:
-                                "Starts the macOS trust flow for automatic insertion."
-                        ) {
-                            viewModel.enableAccessibility()
-                        }
-
-                        AccessibleActionButton(
-                            title: "Open System Settings",
-                            accessibilityLabel:
-                                "Open Accessibility settings",
-                            accessibilityHelp:
-                                "Opens the macOS Accessibility privacy settings."
-                        ) {
-                            viewModel.openAccessibilitySettings()
-                        }
-                    }
+                    accessibilityAction
                 }
             }
 
             Text(
-                "Accessibility enables automatic insertion. It is optional; " +
-                    "without it, completed transcripts remain on the clipboard. " +
-                    "In System Settings, use Privacy & Security → Accessibility."
+                "Accessibility enables automatic insertion. Dictation remains available through the clipboard without it."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .accessibilityLabel(
-                "Accessibility status: \(accessibilityStatusTitle). " +
-                    "Accessibility is optional and enables automatic insertion."
-            )
+        }
+    }
+
+    @ViewBuilder
+    private var microphoneAction: some View {
+        switch viewModel.microphoneStatus {
+        case .notDetermined:
+            AccessibleActionButton(
+                title: "Enable",
+                accessibilityLabel: "Enable microphone access",
+                accessibilityHelp: "Requests permission from macOS."
+            ) {
+                Task {
+                    await viewModel.enableMicrophone()
+                }
+            }
+        case .denied, .restricted:
+            AccessibleActionButton(
+                title: "Open System Settings",
+                accessibilityLabel: "Open Microphone settings",
+                accessibilityHelp:
+                    "Opens the macOS Microphone privacy settings."
+            ) {
+                viewModel.openMicrophoneSettings()
+            }
+        case .granted:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var accessibilityAction: some View {
+        if viewModel.accessibilityStatus == .notGranted {
+            AccessibleActionButton(
+                title: "Enable",
+                accessibilityLabel: "Enable Accessibility access",
+                accessibilityHelp:
+                    "Starts the macOS Accessibility trust flow."
+            ) {
+                viewModel.enableAccessibility()
+            }
+
+            AccessibleActionButton(
+                title: "Open System Settings",
+                accessibilityLabel: "Open Accessibility settings",
+                accessibilityHelp:
+                    "Opens the macOS Accessibility privacy settings."
+            ) {
+                viewModel.openAccessibilitySettings()
+            }
         }
     }
 
     private var shortcutSection: some View {
         settingsGroup("Global Shortcut", systemImage: "keyboard") {
-            LabeledContent("Start or stop dictation") {
-                ShortcutRecorder(
-                    shortcut: viewModel.globalShortcut,
-                    isEnabled:
-                        viewModel.canEditPresentedSettings
-                        && !viewModel.isValidating,
-                    onCandidate: viewModel.updateGlobalShortcut
-                )
-                .frame(width: 180, height: 28)
-                .accessibilityLabel("Global dictation shortcut")
-                .accessibilityValue(
-                    viewModel.globalShortcut.displayName
-                )
-                .accessibilityHint(
-                    "Press Space or Return to record a replacement shortcut. " +
-                        "Press Escape while recording a shortcut to cancel."
-                )
-            }
+            ShortcutRecorder(
+                shortcut: viewModel.globalShortcut,
+                isEnabled: true,
+                onCandidate: viewModel.updateGlobalShortcut
+            )
 
-            HStack(alignment: .firstTextBaseline) {
+            HStack {
                 Text(
-                    "Click the shortcut, then press a key with Command, " +
-                        "Option, Control, or Shift. During an active dictation " +
-                        "session, Escape cancels the session."
+                    "The saved shortcut stays active until Save Changes succeeds."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
 
                 Spacer()
 
-                AccessibleActionButton(
-                    title: "Reset to Option–Space",
-                    accessibilityLabel:
-                        "Reset global shortcut to Option–Space",
-                    accessibilityHelp:
-                        "Restores the default global dictation shortcut."
-                ) {
+                Button("Reset to Option–Space") {
                     viewModel.resetGlobalShortcut()
                 }
                 .disabled(
-                    viewModel.globalShortcut == .defaultShortcut
-                        || viewModel.isValidating
+                    viewModel.globalShortcut
+                        == GlobalShortcut.defaultShortcut
                 )
             }
 
-            if let error = viewModel.shortcutErrorMessage {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .textSelection(.enabled)
-            } else if let success = viewModel.shortcutSuccessMessage {
-                Label(success, systemImage: "checkmark.circle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.green)
+            if let message = viewModel.shortcutErrorMessage {
+                issueLabel(message)
             }
         }
     }
@@ -254,94 +295,90 @@ struct ConfigurationView: View {
     private var feedbackSection: some View {
         settingsGroup("Feedback", systemImage: "speaker.wave.2") {
             Toggle(
-                "Play sound cues",
+                "Play start, stop, cancel, and failure sounds",
                 isOn: $viewModel.soundCuesEnabled
             )
-            .disabled(viewModel.isValidating)
-            .accessibilityHint(
-                "Controls all recording and attention sound cues."
-            )
-
-            Text(
-                "Plays distinct cues when recording starts, stops, is " +
-                    "cancelled, or requires attention. Sounds use the current " +
-                    "macOS output device and volume."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var credentialSection: some View {
-        settingsGroup("OpenAI Credential", systemImage: "key") {
-            LabeledContent("Status") {
+    private var privacySection: some View {
+        settingsGroup("Data & Privacy", systemImage: "lock.shield") {
+            Label(
+                "Provider credentials are stored in macOS Keychain.",
+                systemImage: "key.fill"
+            )
+            privacyFlow(
+                capability: .transcription,
+                provider: viewModel.transcriptionProviderChoice
+            )
+            if viewModel.postProcessingEnabled {
+                privacyFlow(
+                    capability: .postProcessing,
+                    provider: viewModel.postProcessingProviderChoice
+                )
+            } else {
                 Label(
-                    viewModel.credentialExists
-                        ? "API key saved"
-                        : "No API key saved",
-                    systemImage: viewModel.credentialExists
-                        ? "checkmark.circle.fill"
-                        : "exclamationmark.circle"
-                )
-                .foregroundStyle(
-                    viewModel.credentialExists ? Color.green : Color.secondary
-                )
-                .accessibilityLabel("OpenAI API key status")
-                .accessibilityValue(
-                    viewModel.credentialExists
-                        ? "Saved"
-                        : "Not saved"
+                    "Post-processing is disabled; raw transcripts are not sent for cleanup.",
+                    systemImage: "text.badge.xmark"
                 )
             }
-
-            SecureField(
-                viewModel.credentialExists
-                    ? "Enter a new key to replace the saved key"
-                    : "Enter your OpenAI API key",
-                text: $viewModel.candidateAPIKey
+            Label(
+                "DictationApp has no account or proprietary backend and does not retain completed session data.",
+                systemImage: "externaldrive.badge.checkmark"
             )
-            .textFieldStyle(.roundedBorder)
-            .disabled(viewModel.isValidating)
-            .accessibilityLabel("OpenAI API key")
-            .accessibilityHint(
-                viewModel.credentialExists
-                    ? "Enter a replacement key. The saved key is never displayed."
-                    : "Enter the key that will be stored in macOS Keychain."
+        }
+        .font(.callout)
+    }
+
+    @ViewBuilder
+    private func privacyFlow(
+        capability: ProviderCapability,
+        provider: ProviderID
+    ) -> some View {
+        if
+            let descriptor = viewModel.descriptor(for: provider),
+            let metadata = descriptor.capabilities[capability]
+        {
+            Label(
+                metadata.dataFlowDescription,
+                systemImage:
+                    metadata.processingLocation == .cloud
+                    ? "icloud.and.arrow.up"
+                    : "desktopcomputer"
             )
-
-            HStack {
-                Text(
-                    "The key is stored in macOS Keychain and is never shown again."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                Spacer()
-
-                if
-                    viewModel.credentialExists
-                        && viewModel.presentationMode == .full
-                {
-                    AccessibleActionButton(
-                        title: "Delete",
-                        accessibilityLabel:
-                            "Delete saved OpenAI API key",
-                        accessibilityHelp:
-                            "Opens a confirmation before removing the saved key."
-                    ) {
-                        isConfirmingCredentialDeletion = true
-                    }
-                    .disabled(viewModel.isValidating)
-                }
-            }
         }
     }
 
     private var transcriptionSection: some View {
         settingsGroup("Transcription", systemImage: "waveform") {
-            LabeledContent("Provider") {
-                Text(ProviderID.openAI.displayName)
+            if viewModel.availableTranscriptionProviders.isEmpty {
+                noProviderConfigured(capability: .transcription)
+            } else {
+                LabeledContent("Provider") {
+                    Picker(
+                        "Transcription provider",
+                        selection: Binding(
+                            get: {
+                                viewModel.transcriptionProviderChoice
+                            },
+                            set: {
+                                viewModel.selectTranscriptionProvider($0)
+                            }
+                        )
+                    ) {
+                        ForEach(
+                            viewModel.availableTranscriptionProviders
+                        ) { provider in
+                            providerPickerLabel(
+                                provider,
+                                capability: .transcription
+                            )
+                            .tag(provider.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 320)
+                }
             }
 
             LabeledContent("Model") {
@@ -349,20 +386,31 @@ struct ConfigurationView: View {
                     "Transcription model",
                     selection: $viewModel.transcriptionModelChoice
                 ) {
-                    ForEach(OpenAIModelCatalog.transcriptionModels) { model in
+                    ForEach(
+                        viewModel.modelCatalog(
+                            for: viewModel.transcriptionProviderChoice,
+                            capability: .transcription
+                        )
+                    ) {
+                        model in
                         modelLabel(model).tag(model.id)
                     }
-                    Divider()
-                    Text("Advanced: Custom model")
-                        .tag(ConfigurationViewModel.customModelChoice)
+                    if
+                        viewModel.supportsCustomModels(
+                            provider:
+                                viewModel.transcriptionProviderChoice,
+                            capability: .transcription
+                        )
+                    {
+                        Divider()
+                        Text("Advanced: Custom model")
+                            .tag(
+                                ConfigurationViewModel.customModelChoice
+                            )
+                    }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 300)
-                .disabled(viewModel.isValidating)
-                .accessibilityLabel("Transcription model")
-                .accessibilityHint(
-                    "Selects the OpenAI model used for completed audio."
-                )
+                .frame(maxWidth: 320)
             }
 
             if
@@ -374,107 +422,150 @@ struct ConfigurationView: View {
                     text: $viewModel.transcriptionCustomModel
                 )
                 .textFieldStyle(.roundedBorder)
-                .disabled(viewModel.isValidating)
+                .focused($focusedField, equals: .transcriptionModel)
                 .accessibilityLabel(
                     "Custom transcription model identifier"
                 )
             }
 
+            if
+                let issue = viewModel.issue(
+                    for: .transcriptionModel
+                )
+            {
+                issueLabel(issue.message)
+            }
+
             if viewModel.presentationMode == .full {
                 LabeledContent("Language") {
-                    Picker("Language", selection: $viewModel.languageCode) {
+                    Picker(
+                        "Language",
+                        selection: $viewModel.languageCode
+                    ) {
                         Text("Automatic").tag("")
                         Divider()
-                        ForEach(OpenAIModelCatalog.languages) { language in
+                        ForEach(viewModel.availableLanguages) { language in
                             Text(language.displayName).tag(language.id)
+                        }
+                        if viewModel.hasUnsupportedLanguageSelection {
+                            Divider()
+                            Text(
+                                "\(viewModel.languageCode) — Unsupported"
+                            )
+                            .tag(viewModel.languageCode)
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 300)
-                    .disabled(viewModel.isValidating)
-                    .accessibilityLabel(
-                        "Transcription language hint"
+                    .frame(maxWidth: 320)
+                    .focused($focusedField, equals: .language)
+                }
+                if viewModel.hasUnsupportedLanguageSelection {
+                    issueLabel(
+                        "The selected provider does not support this language.",
+                        warning: true
                     )
-                    .accessibilityHint(
-                        "Automatic sends no language hint and does not translate."
-                    )
+                }
+            } else {
+                LabeledContent("Language") {
+                    Text(viewModel.repairLanguageTitle)
+                        .foregroundStyle(.secondary)
                 }
             }
 
-            uploadNotice(
-                viewModel.presentationMode == .transcriptionRepair
-                    ? "Validation uploads only the bundled 0.75-second silent " +
-                        "M4A file to OpenAI. The retained recording is not " +
-                        "uploaded until you explicitly retry."
-                    : "Saving a new key or custom transcription model uploads a " +
-                        "bundled 0.75-second silent M4A file to OpenAI. Future " +
-                        "dictation audio will be uploaded only after recording stops."
+            stageDisclosure(
+                provider: viewModel.transcriptionProviderChoice,
+                capability: .transcription
             )
         }
     }
 
     private var postProcessingSection: some View {
-        settingsGroup("Post-processing", systemImage: "wand.and.stars") {
+        settingsGroup(
+            "Transcript cleanup",
+            systemImage: "wand.and.stars"
+        ) {
             Toggle(
-                "Clean up punctuation and formatting",
+                "Enable transcript cleanup",
                 isOn: $viewModel.postProcessingEnabled
-            )
-            .disabled(viewModel.isValidating)
-            .accessibilityHint(
-                "When enabled, each raw transcript is sent to OpenAI for cleanup."
             )
 
             if viewModel.postProcessingEnabled {
                 if
-                    let attentionMessage =
+                    let attention =
                         viewModel.postProcessingAttentionMessage
                 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label(
-                            "Needs Attention",
-                            systemImage:
-                                "exclamationmark.triangle.fill"
-                        )
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel(
-                            "Post-processing needs attention"
-                        )
-
-                        Text(attentionMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(
-                                horizontal: false,
-                                vertical: true
-                            )
-                    }
+                    issueLabel(attention, warning: true)
                 }
 
-                LabeledContent("Provider") {
-                    Text(ProviderID.openAI.displayName)
+                if viewModel.availablePostProcessingProviders.isEmpty {
+                    noProviderConfigured(
+                        capability: .postProcessing
+                    )
+                } else {
+                    LabeledContent("Provider") {
+                        Picker(
+                            "Post-processing provider",
+                            selection: Binding(
+                                get: {
+                                    viewModel
+                                        .postProcessingProviderChoice
+                                },
+                                set: {
+                                    viewModel
+                                        .selectPostProcessingProvider($0)
+                                }
+                            )
+                        ) {
+                            ForEach(
+                                viewModel
+                                    .availablePostProcessingProviders
+                            ) { provider in
+                                providerPickerLabel(
+                                    provider,
+                                    capability: .postProcessing
+                                )
+                                .tag(provider.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 320)
+                    }
                 }
 
                 LabeledContent("Model") {
                     Picker(
                         "Post-processing model",
-                        selection: $viewModel.postProcessingModelChoice
+                        selection:
+                            $viewModel.postProcessingModelChoice
                     ) {
                         ForEach(
-                            OpenAIModelCatalog.postProcessingModels
+                            viewModel.modelCatalog(
+                                for:
+                                    viewModel
+                                        .postProcessingProviderChoice,
+                                capability: .postProcessing
+                            )
                         ) { model in
                             modelLabel(model).tag(model.id)
                         }
-                        Divider()
-                        Text("Advanced: Custom model")
-                            .tag(ConfigurationViewModel.customModelChoice)
+                        if
+                            viewModel.supportsCustomModels(
+                                provider:
+                                    viewModel
+                                        .postProcessingProviderChoice,
+                                capability: .postProcessing
+                            )
+                        {
+                            Divider()
+                            Text("Advanced: Custom model")
+                                .tag(
+                                    ConfigurationViewModel
+                                        .customModelChoice
+                                )
+                        }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 300)
-                    .disabled(viewModel.isValidating)
-                    .accessibilityLabel("Post-processing model")
-                    .accessibilityHint(
-                        "Selects the OpenAI model used to clean raw transcripts."
-                    )
+                    .frame(maxWidth: 320)
                 }
 
                 if
@@ -486,110 +577,348 @@ struct ConfigurationView: View {
                         text: $viewModel.postProcessingCustomModel
                     )
                     .textFieldStyle(.roundedBorder)
-                    .disabled(viewModel.isValidating)
+                    .focused(
+                        $focusedField,
+                        equals: .postProcessingModel
+                    )
                     .accessibilityLabel(
                         "Custom post-processing model identifier"
                     )
                 }
 
-                uploadNotice(
-                    "Enabling or changing cleanup sends a fixed minimal " +
-                        "validation text to OpenAI. When enabled, each raw " +
-                        "transcript will also be sent to OpenAI."
+                if
+                    let issue = viewModel.issue(
+                        for: .postProcessingModel
+                    )
+                {
+                    issueLabel(issue.message)
+                }
+
+                stageDisclosure(
+                    provider:
+                        viewModel.postProcessingProviderChoice,
+                    capability: .postProcessing
                 )
             } else {
                 Text(
-                    "Disabled returns the raw transcript and makes no cleanup request."
+                    "The raw transcript is inserted without an additional provider request."
                 )
-                .font(.callout)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             }
         }
     }
 
+    private var providersPage: some View {
+        NavigationStack {
+            page(
+                title: "Providers",
+                detail:
+                    "Configure implemented providers and review their capabilities."
+            ) {
+                ForEach(viewModel.providerRegistry.settingsModules) {
+                    module in
+                    Button {
+                        viewModel.showProvider(module.id)
+                    } label: {
+                        providerRow(module)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(
+                        "Opens \(module.descriptor.displayName) settings."
+                    )
+                }
+            }
+            .navigationDestination(
+                item: $viewModel.selectedProviderDetail
+            ) { providerID in
+                providerDetail(providerID)
+            }
+        }
+    }
+
+    private func providerDetail(_ providerID: ProviderID) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let descriptor = viewModel.descriptor(for: providerID) {
+                    HStack(spacing: 12) {
+                        Image(systemName: descriptor.systemImage)
+                            .font(.title)
+                            .foregroundStyle(.tint)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(descriptor.displayName)
+                                .font(.title2.weight(.semibold))
+                            Text(
+                                "Provider-specific connection and authentication settings."
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if
+                        let module =
+                            viewModel.providerRegistry.settingsModule(
+                                for: providerID
+                            )
+                    {
+                        settingsGroup(
+                            "Configuration",
+                            systemImage: "key"
+                        ) {
+                            module.makeDetailView()
+                        }
+
+                        settingsGroup(
+                            "Capabilities",
+                            systemImage: "checklist"
+                        ) {
+                            ForEach(
+                                module.descriptor.capabilities.keys.sorted {
+                                    $0.rawValue < $1.rawValue
+                                },
+                                id: \.self
+                            ) { capability in
+                                if
+                                    let metadata =
+                                        module.descriptor.capabilities[
+                                            capability
+                                        ]
+                                {
+                                    LabeledContent(
+                                        capability.displayName
+                                    ) {
+                                        Text(
+                                            metadata.processingLocation
+                                                .displayName
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        if
+                            let issue = viewModel.issue(
+                                for: .credential(providerID)
+                            )
+                        {
+                            issueLabel(issue.message)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+            }
+        }
+    }
+
+    private func providerRow(
+        _ module: AnyProviderSettingsModule
+    ) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: module.descriptor.systemImage)
+                .font(.title2)
+                .foregroundStyle(.tint)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(module.descriptor.displayName)
+                    .font(.headline)
+
+                HStack(spacing: 6) {
+                    ForEach(
+                        module.descriptor.capabilities.keys.sorted {
+                            $0.rawValue < $1.rawValue
+                        },
+                        id: \.self
+                    ) { capability in
+                        Text(capability.displayName)
+                            .font(.caption2)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(.quaternary)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+
+            Spacer()
+
+            providerStatus(module.readiness)
+            Image(systemName: "chevron.right")
+                .foregroundStyle(.tertiary)
+        }
+        .padding(16)
+        .background(.quaternary.opacity(0.35))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .contentShape(Rectangle())
+    }
+
+    private func providerStatus(
+        _ readiness: ProviderReadiness
+    ) -> some View {
+        Label(
+            readinessTitle(readiness),
+            systemImage: readinessSystemImage(readiness)
+        )
+        .font(.caption)
+        .foregroundStyle(
+            readiness.state == .configured ? Color.green : Color.orange
+        )
+    }
+
+    private func noProviderConfigured(
+        capability: ProviderCapability
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                "No provider configured",
+                systemImage: "exclamationmark.triangle"
+            )
+            .foregroundStyle(.orange)
+            Text(
+                "Configure a provider that supports \(capability.displayName.lowercased())."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            Button("Configure Providers") {
+                viewModel.selectedDestination = .providers
+            }
+        }
+    }
+
+    private func providerPickerLabel(
+        _ descriptor: ProviderDescriptor,
+        capability: ProviderCapability
+    ) -> some View {
+        HStack {
+            Text(descriptor.displayName)
+            if let metadata = descriptor.capabilities[capability] {
+                Text("— \(metadata.processingLocation.displayName)")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     @ViewBuilder
-    private var resultMessage: some View {
-        if let errorMessage = viewModel.errorMessage {
-            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                .font(.callout)
-                .foregroundStyle(.red)
-                .textSelection(.enabled)
-                .accessibilityLabel(
-                    "Configuration error. \(errorMessage)"
-                )
-        } else if let successMessage = viewModel.successMessage {
-            Label(successMessage, systemImage: "checkmark.circle.fill")
-                .font(.callout)
-                .foregroundStyle(.green)
-                .accessibilityLabel(
-                    "Configuration status. \(successMessage)"
-                )
+    private func stageDisclosure(
+        provider: ProviderID,
+        capability: ProviderCapability
+    ) -> some View {
+        if
+            let descriptor = viewModel.descriptor(for: provider),
+            let metadata = descriptor.capabilities[capability]
+        {
+            Label(
+                metadata.dataFlowDescription,
+                systemImage:
+                    metadata.processingLocation == .cloud
+                    ? "icloud.and.arrow.up"
+                    : "desktopcomputer"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
     private var footer: some View {
-        HStack {
-            Label(
-                footerDetail,
-                systemImage: "lock.shield"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            if let issue = viewModel.issues.first {
+                Label(
+                    issue.message,
+                    systemImage: "exclamationmark.circle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.red)
+                .lineLimit(2)
+            } else if let success = viewModel.successMessage {
+                Label(
+                    success,
+                    systemImage: "checkmark.circle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.green)
+            } else {
+                Label(
+                    footerDetail,
+                    systemImage: "lock.shield"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
 
             Spacer()
 
-            AccessibleActionButton(
-                title: viewModel.saveButtonTitle,
-                accessibilityLabel: viewModel.saveButtonTitle,
-                accessibilityHelp:
-                    "Validates required cloud configuration before saving.",
-                isDefault: true
-            ) {
-                Task {
-                    await viewModel.save()
+            if viewModel.isValidating {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Validating configuration")
+                Button("Cancel") {
+                    viewModel.cancelValidation()
                 }
-            }
-            .disabled(!viewModel.canSave)
-            .overlay(alignment: .leading) {
-                if viewModel.isValidating {
-                    ProgressView()
-                        .controlSize(.small)
-                        .offset(x: -24)
-                        .accessibilityLabel(
-                            "Validating configuration"
-                        )
+            } else {
+                AccessibleActionButton(
+                    title: viewModel.saveButtonTitle,
+                    accessibilityLabel: viewModel.saveButtonTitle,
+                    accessibilityHelp:
+                        "Validates and saves all Settings changes.",
+                    isDefault: true
+                ) {
+                    Task {
+                        _ = await viewModel.save()
+                    }
                 }
+                .disabled(!viewModel.canSave)
             }
         }
-        .padding(20)
-    }
-
-    private var headerTitle: String {
-        switch viewModel.presentationMode {
-        case .full:
-            viewModel.isFirstRun
-                ? "Set up DictationApp"
-                : "DictationApp Settings"
-        case .transcriptionRepair:
-            "Repair Transcription"
-        }
-    }
-
-    private var headerDetail: String {
-        switch viewModel.presentationMode {
-        case .full:
-            "Configure cloud transcription and optional transcript cleanup."
-        case .transcriptionRepair:
-            "Validate an API key and transcription model for the retained recording."
-        }
+        .padding(18)
     }
 
     private var footerDetail: String {
         switch viewModel.presentationMode {
         case .full:
-            "Opening Settings never requests permissions; Enable actions are explicit."
+            "Changes apply together after validation."
         case .transcriptionRepair:
-            "Language, recording, and post-processing settings remain fixed for this session."
+            "Retry remains a separate explicit action."
+        }
+    }
+
+    private func canEdit(_ destination: SettingsDestination) -> Bool {
+        guard viewModel.canEditPresentedSettings else {
+            return false
+        }
+        if viewModel.presentationMode == .transcriptionRepair {
+            return destination == .transcription
+                || destination == .providers
+        }
+        return true
+    }
+
+    private func hasAttention(
+        _ destination: SettingsDestination
+    ) -> Bool {
+        switch destination {
+        case .providers:
+            return viewModel.providerRegistry.settingsModules.contains {
+                $0.readiness.state == .attentionRequired
+                    || $0.readiness.state == .setupRequired
+            }
+        case .transcription:
+            let state = viewModel.providerReadiness(
+                viewModel.transcriptionProviderChoice
+            ).state
+            return state == .attentionRequired
+                || state == .setupRequired
+        case .postProcessing:
+            return viewModel.postProcessingAttentionMessage != nil
+        case .general:
+            return false
         }
     }
 
@@ -610,14 +939,9 @@ struct ConfigurationView: View {
         }
     }
 
-    private func uploadNotice(_ text: String) -> some View {
-        Label(text, systemImage: "icloud.and.arrow.up")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func modelLabel(_ model: ProviderModel) -> some View {
+    private func modelLabel(
+        _ model: ProviderModelDescriptor
+    ) -> some View {
         HStack {
             Text(model.displayName)
             if let detail = model.detail {
@@ -629,11 +953,31 @@ struct ConfigurationView: View {
 
     private func permissionStatusLabel(
         _ title: String,
-        systemImage: String,
-        color: Color
+        granted: Bool
     ) -> some View {
-        Label(title, systemImage: systemImage)
-            .foregroundStyle(color)
+        Label(
+            title,
+            systemImage:
+                granted
+                ? "checkmark.circle.fill"
+                : "exclamationmark.circle"
+        )
+        .foregroundStyle(granted ? Color.green : Color.secondary)
+    }
+
+    private func issueLabel(
+        _ message: String,
+        warning: Bool = false
+    ) -> some View {
+        Label(
+            message,
+            systemImage:
+                warning
+                ? "exclamationmark.triangle.fill"
+                : "exclamationmark.circle.fill"
+        )
+        .font(.caption)
+        .foregroundStyle(warning ? Color.orange : Color.red)
     }
 
     private var microphoneStatusTitle: String {
@@ -641,7 +985,7 @@ struct ConfigurationView: View {
         case .notDetermined:
             "Not requested"
         case .granted:
-            "Allowed"
+            "Enabled"
         case .denied:
             "Denied"
         case .restricted:
@@ -649,68 +993,54 @@ struct ConfigurationView: View {
         }
     }
 
-    private var microphoneStatusSystemImage: String {
-        switch viewModel.microphoneStatus {
-        case .granted:
-            "checkmark.circle.fill"
-        case .notDetermined:
-            "circle.dashed"
-        case .denied, .restricted:
-            "exclamationmark.circle"
-        }
-    }
-
-    private var microphoneStatusColor: Color {
-        switch viewModel.microphoneStatus {
-        case .granted:
-            .green
-        case .notDetermined:
-            .secondary
-        case .denied, .restricted:
-            .orange
-        }
-    }
-
     private var microphonePermissionExplanation: String {
         switch viewModel.microphoneStatus {
         case .notDetermined:
-            "Microphone access is required to record dictation. It will also " +
-                "be requested just in time on the first recording attempt."
+            "Enable microphone access now or allow it when starting the first recording."
         case .granted:
-            "Microphone access is available for local recording."
+            "DictationApp can record from the current macOS default input device."
         case .denied:
-            "Recording is unavailable until DictationApp is enabled in " +
-                "System Settings → Privacy & Security → Microphone."
+            "Recording remains unavailable until access is enabled in System Settings."
         case .restricted:
-            "Microphone access is restricted by this Mac's policy. Recording " +
-                "is unavailable while the restriction remains."
+            "Microphone access is restricted by macOS or device policy."
         }
     }
 
     private var accessibilityStatusTitle: String {
-        switch viewModel.accessibilityStatus {
-        case .granted:
-            "Allowed"
-        case .notGranted:
-            "Not allowed"
+        viewModel.accessibilityStatus == .granted
+            ? "Enabled"
+            : "Not enabled"
+    }
+
+    private func readinessTitle(
+        _ readiness: ProviderReadiness
+    ) -> String {
+        switch readiness.state {
+        case .configured:
+            "Configured"
+        case .setupRequired:
+            "Setup required"
+        case .attentionRequired:
+            "Attention required"
+        case .pendingValidation:
+            "Pending validation"
+        case .willDisconnect:
+            "Will be disconnected"
         }
     }
 
-    private var accessibilityStatusSystemImage: String {
-        switch viewModel.accessibilityStatus {
-        case .granted:
+    private func readinessSystemImage(
+        _ readiness: ProviderReadiness
+    ) -> String {
+        switch readiness.state {
+        case .configured:
             "checkmark.circle.fill"
-        case .notGranted:
-            "circle.dashed"
-        }
-    }
-
-    private var accessibilityStatusColor: Color {
-        switch viewModel.accessibilityStatus {
-        case .granted:
-            .green
-        case .notGranted:
-            .secondary
+        case .pendingValidation:
+            "clock.fill"
+        case .willDisconnect:
+            "minus.circle.fill"
+        case .setupRequired, .attentionRequired:
+            "exclamationmark.triangle.fill"
         }
     }
 }

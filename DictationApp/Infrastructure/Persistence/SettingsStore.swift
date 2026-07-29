@@ -5,15 +5,17 @@ struct StoredSettings {
     var hasCompletedFirstRun: Bool
     var globalShortcut: GlobalShortcut
     var soundCuesEnabled: Bool
+    var lastSettingsDestination: String
 }
 
 @MainActor
 final class SettingsStore {
     private enum Key {
-        static let configuration = "v1.configuration"
+        static let configuration = "v2.configuration"
         static let hasCompletedFirstRun = "v1.hasCompletedFirstRun"
         static let globalShortcut = "v1.globalShortcut"
         static let soundCuesEnabled = "v1.soundCuesEnabled"
+        static let lastSettingsDestination = "v1.lastSettingsDestination"
     }
 
     private let defaults: UserDefaults
@@ -42,17 +44,23 @@ final class SettingsStore {
                 forKey: Key.hasCompletedFirstRun
             ),
             globalShortcut: loadGlobalShortcut(),
-            soundCuesEnabled: loadSoundCuesEnabled()
+            soundCuesEnabled: loadSoundCuesEnabled(),
+            lastSettingsDestination:
+                defaults.string(forKey: Key.lastSettingsDestination)
+                ?? "general"
         )
     }
 
     func commit(
         configuration: AppConfiguration,
         hasCompletedFirstRun: Bool,
-        soundCuesEnabled: Bool
+        soundCuesEnabled: Bool,
+        globalShortcut: GlobalShortcut
     ) throws {
-        let data = try encoder.encode(configuration)
-        defaults.set(data, forKey: Key.configuration)
+        let configurationData = try encoder.encode(configuration)
+        let shortcutData = try encoder.encode(globalShortcut)
+        defaults.set(configurationData, forKey: Key.configuration)
+        defaults.set(shortcutData, forKey: Key.globalShortcut)
         defaults.set(
             hasCompletedFirstRun,
             forKey: Key.hasCompletedFirstRun
@@ -61,6 +69,10 @@ final class SettingsStore {
             soundCuesEnabled,
             forKey: Key.soundCuesEnabled
         )
+    }
+
+    func saveLastSettingsDestination(_ rawValue: String) {
+        defaults.set(rawValue, forKey: Key.lastSettingsDestination)
     }
 
     func commit(globalShortcut: GlobalShortcut) throws {

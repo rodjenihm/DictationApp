@@ -2,6 +2,41 @@ import Combine
 import Foundation
 import OSLog
 
+enum SettingsDestination: String, Codable, CaseIterable, Identifiable {
+    case general
+    case transcription
+    case postProcessing
+    case providers
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general:
+            "General"
+        case .transcription:
+            "Transcription"
+        case .postProcessing:
+            "Post-processing"
+        case .providers:
+            "Providers"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general:
+            "gearshape"
+        case .transcription:
+            "waveform"
+        case .postProcessing:
+            "wand.and.stars"
+        case .providers:
+            "server.rack"
+        }
+    }
+}
+
 enum ConfigurationPresentationMode: Equatable {
     case full
     case transcriptionRepair
@@ -13,71 +48,154 @@ enum ConfigurationSessionAccess: Equatable {
     case transcriptionRepair
 }
 
+enum ConfigurationRoute: Equatable {
+    case ordinary
+    case destination(SettingsDestination)
+    case provider(ProviderID)
+    case firstRun
+    case transcriptionRepair
+}
+
+enum ConfigurationField: Hashable {
+    case shortcut
+    case provider(ProviderID)
+    case credential(ProviderID)
+    case transcriptionProvider
+    case transcriptionModel
+    case language
+    case postProcessingProvider
+    case postProcessingModel
+}
+
+struct ConfigurationIssue: Identifiable, Equatable {
+    let id = UUID()
+    let destination: SettingsDestination
+    let provider: ProviderID?
+    let field: ConfigurationField
+    let message: String
+}
+
+enum ConfigurationSaveResult: Equatable {
+    case saved
+    case cancelled
+    case failed
+}
+
+struct ConfigurationDraft: Equatable {
+    var configuration: AppConfiguration
+    var shortcut: GlobalShortcut
+    var soundCuesEnabled: Bool
+}
+
 @MainActor
 final class ConfigurationViewModel: ObservableObject {
     static let customModelChoice = "__custom__"
 
-    @Published var candidateAPIKey = ""
+    @Published var selectedDestination: SettingsDestination {
+        didSet {
+            guard selectedDestination != oldValue else {
+                return
+            }
+            if selectedDestination != .providers {
+                selectedProviderDetail = nil
+            }
+            if persistsTopLevelNavigation {
+                settingsStore.saveLastSettingsDestination(
+                    selectedDestination.rawValue
+                )
+            }
+        }
+    }
+    @Published var selectedProviderDetail: ProviderID?
+
+    @Published var transcriptionProviderChoice =
+        AppConfiguration.default.transcriptionProvider
     @Published var transcriptionModelChoice = ""
     @Published var transcriptionCustomModel = ""
     @Published var languageCode = ""
     @Published var postProcessingEnabled = false
+    @Published var postProcessingProviderChoice =
+        AppConfiguration.default.postProcessingProvider
     @Published var postProcessingModelChoice = ""
     @Published var postProcessingCustomModel = ""
     @Published var soundCuesEnabled = true
+    @Published private(set) var globalShortcut =
+        GlobalShortcut.defaultShortcut
 
     @Published private(set) var microphoneStatus:
         MicrophonePermissionStatus = .notDetermined
     @Published private(set) var accessibilityStatus:
         AccessibilityPermissionStatus = .notGranted
-    @Published private(set) var globalShortcut =
-        GlobalShortcut.defaultShortcut
     @Published private(set) var shortcutErrorMessage: String?
-    @Published private(set) var shortcutSuccessMessage: String?
-
-    @Published private(set) var credentialExists = false
+    @Published private(set) var successMessage: String?
+    @Published private(set) var issues: [ConfigurationIssue] = []
     @Published private(set) var hasCompletedFirstRun = false
     @Published private(set) var isValidating = false
-    @Published private(set) var errorMessage: String?
-    @Published private(set) var successMessage: String?
     @Published private(set) var presentationMode:
         ConfigurationPresentationMode = .full
     @Published private(set) var sessionAccess:
         ConfigurationSessionAccess = .editable
+    @Published private(set) var repairContext:
+        TranscriptionRepairContext?
 
     var onConfigurationChanged: (() -> Void)?
     var onTranscriptionRepairValidated:
         ((TranscriptionRepair) -> Void)?
+    var onRequestClose: (() -> Void)?
+
+    let providerRegistry: ProviderRegistry
 
     private let settingsStore: SettingsStore
-    private let credentialStore: any CredentialStore
-    private let validator: any OpenAIConfigurationValidating
     private let permissionService: PermissionService
     private let shortcutService: GlobalShortcutService
-    private let postProcessingRuntimeHealth:
-        PostProcessingRuntimeHealth
+    private let providerRuntimeHealth:
+        ProviderRuntimeHealthStore
     private var savedConfiguration: AppConfiguration = .default
+    private var savedShortcut = GlobalShortcut.defaultShortcut
+    private var savedSoundCuesEnabled = true
+    private var transcriptionModelsByProvider:
+        [ProviderID: ModelSelection] = [:]
+    private var postProcessingModelsByProvider:
+        [ProviderID: ModelSelection] = [:]
     private var postProcessingHealthCancellable: AnyCancellable?
+    private var providerCancellables: [AnyCancellable] = []
+    private var validationTask:
+        Task<ConfigurationSaveResult, Never>?
+    private var persistsTopLevelNavigation = true
 
     init(
         settingsStore: SettingsStore,
-        credentialStore: any CredentialStore,
-        validator: any OpenAIConfigurationValidating,
         permissionService: PermissionService,
         shortcutService: GlobalShortcutService,
-        postProcessingRuntimeHealth: PostProcessingRuntimeHealth
+        providerRegistry: ProviderRegistry,
+        providerRuntimeHealth: ProviderRuntimeHealthStore
     ) {
         self.settingsStore = settingsStore
-        self.credentialStore = credentialStore
-        self.validator = validator
         self.permissionService = permissionService
         self.shortcutService = shortcutService
-        self.postProcessingRuntimeHealth =
-            postProcessingRuntimeHealth
+        self.providerRegistry = providerRegistry
+        self.providerRuntimeHealth = providerRuntimeHealth
+
+        let rawDestination =
+            settingsStore.load().lastSettingsDestination
+        selectedDestination =
+            SettingsDestination(rawValue: rawDestination)
+            ?? .general
+
         postProcessingHealthCancellable =
-            postProcessingRuntimeHealth.$attention.sink {
+            providerRuntimeHealth.$attentions.sink {
                 [weak self] _ in
                 self?.objectWillChange.send()
+            }
+        providerCancellables =
+            providerRegistry.settingsModules.map { module in
+                module.objectWillChange.sink { [weak self] _ in
+                    self?.issues.removeAll {
+                        $0.provider == module.id
+                            && $0.destination == .providers
+                    }
+                    self?.objectWillChange.send()
+                }
             }
         reload()
     }
@@ -96,40 +214,21 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     var canSave: Bool {
-        guard
-            !isValidating,
-            canEditPresentedSettings
-        else {
+        guard !isValidating, canEditPresentedSettings else {
             return false
         }
-
-        guard credentialExists || !trimmedCandidateKey.isEmpty else {
-            return false
-        }
-
-        guard !resolvedTranscriptionModel.isEmpty else {
-            return false
-        }
-
-        if presentationMode == .transcriptionRepair {
+        if isFirstRun || presentationMode == .transcriptionRepair {
             return true
         }
-
-        return !postProcessingEnabled || !resolvedPostProcessingModel.isEmpty
+        return hasUnsavedChanges
     }
 
-    var postProcessingAttentionMessage: String? {
-        guard
-            savedConfiguration.postProcessingMode == .enabled
-        else {
-            return nil
+    var hasUnsavedChanges: Bool {
+        guard let draft = configurationDraft() else {
+            return true
         }
-
-        return postProcessingRuntimeHealth.message(
-            for: PostProcessingConfiguration(
-                appConfiguration: savedConfiguration
-            )
-        )
+        return draft != savedBaseline
+            || providerRegistry.settingsModules.contains(where: \.isDirty)
     }
 
     var canEditPresentedSettings: Bool {
@@ -151,49 +250,202 @@ final class ConfigurationViewModel: ObservableObject {
         guard !canEditPresentedSettings else {
             return nil
         }
-
         switch sessionAccess {
         case .readOnly:
             return
-                "Settings are read-only while the current dictation session is active."
+                "Settings are read-only while the current dictation session is active. The session uses the last saved configuration."
         case .editable:
             return
                 "This repair view is no longer active. Reopen Settings to make changes."
         case .transcriptionRepair:
             return
-                "Only the saved credential and transcription model can be repaired for the retained recording."
+                "Only transcription and its provider configuration can be repaired for the retained recording."
         }
+    }
+
+    var availableTranscriptionProviders: [ProviderDescriptor] {
+        availableProviders(for: .transcription)
+    }
+
+    var availablePostProcessingProviders: [ProviderDescriptor] {
+        availableProviders(for: .postProcessing)
+    }
+
+    var availableLanguages: [ProviderLanguageDescriptor] {
+        guard
+            let descriptor =
+                descriptor(for: transcriptionProviderChoice)?
+                .capabilities[.transcription],
+            case .catalog(let languages) = descriptor.languageSupport
+        else {
+            return []
+        }
+        return languages.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName)
+                == .orderedAscending
+        }
+    }
+
+    var hasUnsupportedLanguageSelection: Bool {
+        !languageCode.isEmpty
+            && !availableLanguages.contains { $0.id == languageCode }
+    }
+
+    var repairLanguageTitle: String {
+        guard let language = repairContext?.language else {
+            return "Saved session language"
+        }
+        switch language {
+        case .automatic:
+            return "Automatic (fixed for retained recording)"
+        case .explicit(let identifier):
+            let name =
+                availableLanguages.first { $0.id == identifier }?
+                    .displayName
+                ?? identifier
+            return "\(name) (fixed for retained recording)"
+        }
+    }
+
+    func modelCatalog(
+        for provider: ProviderID,
+        capability: ProviderCapability
+    ) -> [ProviderModelDescriptor] {
+        descriptor(for: provider)?
+            .capabilities[capability]?.modelCatalog ?? []
+    }
+
+    func supportsCustomModels(
+        provider: ProviderID,
+        capability: ProviderCapability
+    ) -> Bool {
+        descriptor(for: provider)?
+            .capabilities[capability]?.supportsCustomModels ?? false
+    }
+
+    var postProcessingAttentionMessage: String? {
+        guard savedConfiguration.postProcessingMode == .enabled else {
+            return nil
+        }
+        return providerRuntimeHealth.message(
+            for: PostProcessingConfiguration(
+                appConfiguration: savedConfiguration
+            )
+        )
+    }
+
+    func providerReadiness(_ id: ProviderID) -> ProviderReadiness {
+        providerRegistry.settingsModule(for: id)?.readiness
+            ?? .setupRequired("Provider setup is unavailable.")
+    }
+
+    func descriptor(for id: ProviderID) -> ProviderDescriptor? {
+        providerRegistry.descriptor(for: id)
+    }
+
+    func issue(
+        for field: ConfigurationField
+    ) -> ConfigurationIssue? {
+        issues.first { $0.field == field }
+    }
+
+    func clearIssue(for field: ConfigurationField) {
+        issues.removeAll { $0.field == field }
+    }
+
+    func hasIssue(in destination: SettingsDestination) -> Bool {
+        issues.contains { $0.destination == destination }
+    }
+
+    func isDirty(_ destination: SettingsDestination) -> Bool {
+        switch destination {
+        case .general:
+            return globalShortcut != savedShortcut
+                || soundCuesEnabled != savedSoundCuesEnabled
+        case .transcription:
+            guard let draft = draftConfiguration() else {
+                return true
+            }
+            return draft.transcription != savedConfiguration.transcription
+                || draft.language != savedConfiguration.language
+        case .postProcessing:
+            guard let draft = draftConfiguration() else {
+                return true
+            }
+            return draft.postProcessingMode
+                    != savedConfiguration.postProcessingMode
+                || draft.postProcessing
+                    != savedConfiguration.postProcessing
+        case .providers:
+            return providerRegistry.settingsModules.contains(
+                where: \.isDirty
+            )
+        }
+    }
+
+    func prepareForPresentation(_ route: ConfigurationRoute) {
+        persistsTopLevelNavigation = route == .ordinary
+        switch route {
+        case .ordinary:
+            presentationMode = .full
+            let storedDestination =
+                SettingsDestination(
+                    rawValue:
+                        settingsStore.load().lastSettingsDestination
+                ) ?? .general
+            selectedDestination = storedDestination
+            selectedProviderDetail = nil
+        case .destination(let destination):
+            presentationMode = .full
+            selectedDestination = destination
+            selectedProviderDetail = nil
+        case .provider(let provider):
+            presentationMode = .full
+            selectedDestination = .providers
+            selectedProviderDetail = provider
+        case .firstRun:
+            presentationMode = .full
+            selectedDestination = .providers
+            selectedProviderDetail =
+                providerRegistry.settingsModules.first?.id
+        case .transcriptionRepair:
+            guard sessionAccess == .transcriptionRepair else {
+                presentationMode = .full
+                return
+            }
+            presentationMode = .transcriptionRepair
+            selectedDestination = .transcription
+            selectedProviderDetail = nil
+        }
+        refreshSystemState()
+    }
+
+    func setRepairContext(_ context: TranscriptionRepairContext?) {
+        repairContext = context
     }
 
     func prepareForPresentation(
         _ mode: ConfigurationPresentationMode
     ) {
-        if
-            mode == .transcriptionRepair,
-            sessionAccess != .transcriptionRepair
-        {
-            presentationMode = .full
-        } else {
-            presentationMode = mode
-        }
-        reload()
+        prepareForPresentation(
+            mode == .transcriptionRepair
+                ? .transcriptionRepair
+                : .ordinary
+        )
     }
 
     func setSessionAccess(_ access: ConfigurationSessionAccess) {
         guard sessionAccess != access else {
             return
         }
-
         sessionAccess = access
-
         switch access {
         case .transcriptionRepair:
             presentationMode = .transcriptionRepair
-            reload()
+            selectedDestination = .transcription
         case .editable:
             if presentationMode == .transcriptionRepair {
                 presentationMode = .full
-                reload()
             }
         case .readOnly:
             break
@@ -204,27 +456,23 @@ final class ConfigurationViewModel: ObservableObject {
         guard !isValidating else {
             return
         }
-
         let stored = settingsStore.load()
         savedConfiguration = stored.configuration
+        savedShortcut = stored.globalShortcut
+        savedSoundCuesEnabled = stored.soundCuesEnabled
         hasCompletedFirstRun = stored.hasCompletedFirstRun
         globalShortcut = stored.globalShortcut
         soundCuesEnabled = stored.soundCuesEnabled
         apply(stored.configuration)
-        candidateAPIKey = ""
+        providerRegistry.settingsModules.forEach { $0.reload() }
+        issues = []
         successMessage = nil
-        shortcutSuccessMessage = nil
-        shortcutErrorMessage =
-            shortcutService.registrationError?.localizedDescription
+        shortcutErrorMessage = nil
         refreshSystemState()
+    }
 
-        do {
-            credentialExists = try credentialStore.credentialExists()
-            errorMessage = nil
-        } catch {
-            credentialExists = false
-            errorMessage = error.localizedDescription
-        }
+    func discardChanges() {
+        reload()
     }
 
     func refreshSystemState() {
@@ -236,23 +484,14 @@ final class ConfigurationViewModel: ObservableObject {
         guard canEditPresentedSettings else {
             return
         }
-        AppLog.configuration.info(
-            "Explicit microphone permission action started"
-        )
         microphoneStatus =
             await permissionService.requestMicrophoneAccess()
-        AppLog.configuration.info(
-            "Microphone permission action completed"
-        )
     }
 
     func enableAccessibility() {
         guard canEditPresentedSettings else {
             return
         }
-        AppLog.configuration.info(
-            "Explicit Accessibility permission action started"
-        )
         accessibilityStatus =
             permissionService.requestAccessibilityAccess()
     }
@@ -272,299 +511,479 @@ final class ConfigurationViewModel: ObservableObject {
         else {
             return
         }
-
-        let previousShortcut = globalShortcut
-        shortcutErrorMessage = nil
-        shortcutSuccessMessage = nil
-
         do {
-            try shortcutService.replaceShortcut(with: candidate)
-
-            do {
-                try settingsStore.commit(globalShortcut: candidate)
-            } catch {
-                try? shortcutService.replaceShortcut(
-                    with: previousShortcut
-                )
-                throw error
-            }
-
+            try shortcutService.validateCandidate(candidate)
             globalShortcut = candidate
-            shortcutSuccessMessage =
-                "Global shortcut updated to \(candidate.displayName)."
-            AppLog.configuration.info(
-                "Global shortcut updated successfully"
-            )
-            onConfigurationChanged?()
+            shortcutErrorMessage = nil
+            issues.removeAll { $0.field == .shortcut }
         } catch {
-            AppLog.configuration.error(
-                "Global shortcut update failed"
-            )
             shortcutErrorMessage = error.localizedDescription
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .general,
+                    provider: nil,
+                    field: .shortcut,
+                    message: error.localizedDescription
+                )
+            )
         }
     }
 
     func resetGlobalShortcut() {
-        guard
-            presentationMode == .full,
-            sessionAccess == .editable
-        else {
-            return
-        }
         updateGlobalShortcut(.defaultShortcut)
     }
 
-    func save() async {
+    func selectTranscriptionProvider(_ provider: ProviderID) {
+        stashCurrentTranscriptionModel()
+        transcriptionProviderChoice = provider
+        let model =
+            transcriptionModelsByProvider[provider]
+            ?? defaultModel(for: provider, capability: .transcription)
+        applyTranscriptionModel(model)
+    }
+
+    func selectPostProcessingProvider(_ provider: ProviderID) {
+        stashCurrentPostProcessingModel()
+        postProcessingProviderChoice = provider
+        let model =
+            postProcessingModelsByProvider[provider]
+            ?? defaultModel(for: provider, capability: .postProcessing)
+        applyPostProcessingModel(model)
+    }
+
+    func showProvider(_ provider: ProviderID) {
+        selectedDestination = .providers
+        selectedProviderDetail = provider
+    }
+
+    func showProvidersList() {
+        selectedProviderDetail = nil
+    }
+
+    func cancelValidation() {
+        validationTask?.cancel()
+    }
+
+    func save() async -> ConfigurationSaveResult {
         guard canSave else {
-            return
+            return .failed
         }
-
-        if presentationMode == .transcriptionRepair {
-            await saveTranscriptionRepair()
-            return
+        let task = Task { [weak self] in
+            guard let self else {
+                return ConfigurationSaveResult.cancelled
+            }
+            return await self.performSave()
         }
+        validationTask = task
+        let result = await task.value
+        validationTask = nil
+        return result
+    }
 
-        errorMessage = nil
+    private func performSave() async -> ConfigurationSaveResult {
+        let wasFirstRun = isFirstRun
+        issues = []
         successMessage = nil
+        shortcutErrorMessage = nil
+
+        guard let configuration = validatedDraftConfiguration() else {
+            routeToFirstIssue()
+            return .failed
+        }
+
         isValidating = true
-        AppLog.configuration.info(
-            "Configuration save validation started"
-        )
         defer { isValidating = false }
 
+        var committedProviders:
+            [(AnyProviderSettingsModule, ProviderCommitToken)] = []
+        var shortcutWasChanged = false
+
         do {
-            let candidateCredential = trimmedCandidateKey
-            let isReplacingCredential = !candidateCredential.isEmpty
-            let credential: String
+            try Task.checkCancellation()
 
-            if isReplacingCredential {
-                credential = candidateCredential
-            } else if let savedCredential = try credentialStore.readCredential() {
-                credential = savedCredential
-            } else {
-                throw ConfigurationInputError.missingCredential
+            let stages = validationStages(for: configuration)
+            let affectedModules =
+                presentationMode == .transcriptionRepair
+                ? providerRegistry.settingsModules.filter {
+                    $0.id == configuration.transcriptionProvider
+                }
+                : providerRegistry.settingsModules
+            for module in affectedModules {
+                let moduleStages = stages.filter {
+                    selectedProvider(
+                        for: $0,
+                        configuration: configuration
+                    ) == module.id
+                }
+                guard module.isDirty || !moduleStages.isEmpty else {
+                    continue
+                }
+                try await module.validate(
+                    configuration: configuration,
+                    stages: moduleStages
+                )
             }
 
-            let configuration = try makeConfiguration()
-            var performedValidation = false
-            var validatedPostProcessingConfiguration:
-                PostProcessingConfiguration?
-
-            let transcriptionCustomChanged =
-                configuration.transcriptionModel.isCustom
-                && configuration.transcriptionModel
-                    != savedConfiguration.transcriptionModel
+            try Task.checkCancellation()
 
             if
-                isReplacingCredential
-                    || !credentialExists
-                    || transcriptionCustomChanged
+                presentationMode == .full,
+                globalShortcut != savedShortcut
             {
-                try await validator.validateTranscription(
-                    credential: credential,
-                    model: configuration.transcriptionModel.identifier
+                try shortcutService.replaceShortcut(
+                    with: globalShortcut
                 )
-                performedValidation = true
+                shortcutWasChanged = true
             }
 
-            let postProcessingConfigurationChanged =
-                configuration.postProcessingProvider
-                    != savedConfiguration.postProcessingProvider
-                || configuration.postProcessingModel
-                    != savedConfiguration.postProcessingModel
-
-            if
-                configuration.postProcessingMode == .enabled
-                    && (
-                        isReplacingCredential
-                            || !credentialExists
-                            || savedConfiguration.postProcessingMode == .disabled
-                            || postProcessingConfigurationChanged
-                    )
-            {
-                try await validator.validatePostProcessing(
-                    credential: credential,
-                    model: configuration.postProcessingModel.identifier
-                )
-                performedValidation = true
-                validatedPostProcessingConfiguration =
-                    PostProcessingConfiguration(
-                        appConfiguration: configuration
-                    )
+            for module in affectedModules
+            where module.isDirty {
+                if let token = try module.commit() {
+                    committedProviders.append((module, token))
+                }
             }
 
-            if isReplacingCredential {
-                try credentialStore.replaceCredential(with: credential)
+            try Task.checkCancellation()
+
+            if presentationMode == .transcriptionRepair {
+                return try completeRepairSave(
+                    configuration: configuration,
+                    affectedModules: affectedModules
+                )
             }
 
             try settingsStore.commit(
                 configuration: configuration,
                 hasCompletedFirstRun: true,
-                soundCuesEnabled: soundCuesEnabled
+                soundCuesEnabled: soundCuesEnabled,
+                globalShortcut: globalShortcut
             )
 
+            providerRegistry.settingsModules.forEach { $0.didSave() }
             savedConfiguration = configuration
-            if let validatedPostProcessingConfiguration {
-                postProcessingRuntimeHealth.clearAfterValidation(
-                    validatedPostProcessingConfiguration
-                )
-            }
+            transcriptionModelsByProvider =
+                configuration.transcription.modelsByProvider
+            postProcessingModelsByProvider =
+                configuration.postProcessing.modelsByProvider
+            savedShortcut = globalShortcut
+            savedSoundCuesEnabled = soundCuesEnabled
             hasCompletedFirstRun = true
-            credentialExists = true
-            candidateAPIKey = ""
-            apply(configuration)
-            successMessage = performedValidation
-                ? "Configuration saved and validated."
-                : "Configuration saved."
-            AppLog.configuration.info(
-                "Configuration save completed successfully"
-            )
-            onConfigurationChanged?()
-        } catch is CancellationError {
-            AppLog.configuration.notice(
-                "Configuration save validation cancelled"
-            )
-            errorMessage = "Validation was cancelled."
-        } catch {
-            AppLog.configuration.error(
-                "Configuration save failed"
-            )
-            errorMessage = error.localizedDescription
-        }
-    }
 
-    func deleteCredential() {
-        guard
-            !isValidating,
-            presentationMode == .full,
-            sessionAccess == .editable
-        else {
-            return
-        }
-
-        errorMessage = nil
-        successMessage = nil
-
-        do {
-            try credentialStore.deleteCredential()
-            credentialExists = false
-            candidateAPIKey = ""
-            successMessage = "The saved OpenAI API key was deleted."
-            AppLog.configuration.notice(
-                "Saved provider credential deleted"
-            )
-            onConfigurationChanged?()
-        } catch {
-            AppLog.configuration.error(
-                "Saved provider credential deletion failed"
-            )
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private func saveTranscriptionRepair() async {
-        errorMessage = nil
-        successMessage = nil
-        isValidating = true
-        AppLog.configuration.info(
-            "Transcription repair validation started"
-        )
-        defer { isValidating = false }
-
-        do {
-            let candidateCredential = trimmedCandidateKey
-            let isReplacingCredential = !candidateCredential.isEmpty
-            let previousCredential =
-                try credentialStore.readCredential()
-            let credential: String
-
-            if isReplacingCredential {
-                credential = candidateCredential
-            } else if let previousCredential {
-                credential = previousCredential
-            } else {
-                throw ConfigurationInputError.missingCredential
-            }
-
-            let modelIdentifier = resolvedTranscriptionModel
-            guard !modelIdentifier.isEmpty else {
-                throw ConfigurationInputError.missingTranscriptionModel
-            }
-
-            let repair = TranscriptionRepair(
-                provider: .openAI,
-                model: transcriptionModelChoice
-                    == Self.customModelChoice
-                    ? .custom(modelIdentifier)
-                    : .curated(modelIdentifier)
-            )
-
-            try await validator.validateTranscription(
-                credential: credential,
-                model: repair.model.identifier
-            )
-
-            let repairedConfiguration = AppConfiguration(
-                transcriptionProvider: repair.provider,
-                transcriptionModel: repair.model,
-                language: savedConfiguration.language,
-                postProcessingMode:
-                    savedConfiguration.postProcessingMode,
-                postProcessingProvider:
-                    savedConfiguration.postProcessingProvider,
-                postProcessingModel:
-                    savedConfiguration.postProcessingModel
-            )
-
-            if isReplacingCredential {
-                try credentialStore.replaceCredential(with: credential)
-            }
-
-            do {
-                try settingsStore.commit(
-                    configuration: repairedConfiguration,
-                    hasCompletedFirstRun: hasCompletedFirstRun,
-                    soundCuesEnabled: soundCuesEnabled
+            if
+                configuration.postProcessingMode == .enabled,
+                stages.contains(.postProcessing)
+            {
+                providerRuntimeHealth.clearAfterValidation(
+                    provider: configuration.postProcessingProvider,
+                    capability: .postProcessing,
+                    model: configuration.postProcessingModel
                 )
-            } catch {
-                if isReplacingCredential {
-                    if let previousCredential {
-                        try? credentialStore.replaceCredential(
-                            with: previousCredential
-                        )
-                    } else {
-                        try? credentialStore.deleteCredential()
-                    }
-                }
-                throw error
+            }
+            if stages.contains(.transcription) {
+                providerRuntimeHealth.clearAfterValidation(
+                    provider: configuration.transcriptionProvider,
+                    capability: .transcription,
+                    model: configuration.transcriptionModel
+                )
             }
 
-            savedConfiguration = repairedConfiguration
-            credentialExists = true
-            candidateAPIKey = ""
-            apply(repairedConfiguration)
-            successMessage =
-                "Transcription configuration repaired and validated. Retry the retained recording."
-            AppLog.configuration.info(
-                "Transcription repair completed successfully"
-            )
+            successMessage = stages.isEmpty
+                ? "Configuration saved."
+                : "Configuration saved and validated."
             onConfigurationChanged?()
-            onTranscriptionRepairValidated?(repair)
+
+            if wasFirstRun {
+                onRequestClose?()
+            }
+            return .saved
         } catch is CancellationError {
-            AppLog.configuration.notice(
-                "Transcription repair validation cancelled"
+            rollback(
+                providers: committedProviders,
+                shortcutWasChanged: shortcutWasChanged
             )
-            errorMessage = "Validation was cancelled."
+            successMessage = nil
+            return .cancelled
         } catch {
-            AppLog.configuration.error(
-                "Transcription repair failed"
+            rollback(
+                providers: committedProviders,
+                shortcutWasChanged: shortcutWasChanged
             )
-            errorMessage = error.localizedDescription
+            mapSaveError(error)
+            routeToFirstIssue()
+            return .failed
         }
     }
 
-    private var trimmedCandidateKey: String {
-        candidateAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func completeRepairSave(
+        configuration: AppConfiguration,
+        affectedModules: [AnyProviderSettingsModule]
+    ) throws -> ConfigurationSaveResult {
+        var repaired = savedConfiguration
+        repaired.transcription.activeProvider =
+            configuration.transcriptionProvider
+        repaired.transcription.setModel(
+            configuration.transcriptionModel,
+            for: configuration.transcriptionProvider
+        )
+        let repair = TranscriptionRepair(
+            provider: repaired.transcriptionProvider,
+            model: repaired.transcriptionModel
+        )
+
+        try settingsStore.commit(
+            configuration: repaired,
+            hasCompletedFirstRun: hasCompletedFirstRun,
+            soundCuesEnabled: savedSoundCuesEnabled,
+            globalShortcut: savedShortcut
+        )
+
+        affectedModules.forEach { $0.didSave() }
+        savedConfiguration = repaired
+        transcriptionModelsByProvider[
+            repaired.transcriptionProvider
+        ] = repaired.transcriptionModel
+        providerRuntimeHealth.clearAfterValidation(
+            provider: repaired.transcriptionProvider,
+            capability: .transcription,
+            model: repaired.transcriptionModel
+        )
+        successMessage =
+            "Transcription configuration repaired and validated."
+        onConfigurationChanged?()
+        onTranscriptionRepairValidated?(repair)
+        onRequestClose?()
+        return .saved
+    }
+
+    private func rollback(
+        providers:
+            [(AnyProviderSettingsModule, ProviderCommitToken)],
+        shortcutWasChanged: Bool
+    ) {
+        for (module, token) in providers.reversed() {
+            module.rollback(token)
+        }
+        if shortcutWasChanged {
+            try? shortcutService.replaceShortcut(with: savedShortcut)
+        }
+    }
+
+    private func validationStages(
+        for configuration: AppConfiguration
+    ) -> Set<ProviderCapability> {
+        var result: Set<ProviderCapability> = []
+        let transcriptionProviderSetupChanged =
+            providerRegistry.settingsModule(
+                for: configuration.transcriptionProvider
+            )?.isDirty ?? false
+        let transcriptionChanged =
+            configuration.transcriptionProvider
+                != savedConfiguration.transcriptionProvider
+                || (
+                    configuration.transcriptionModel.isCustom
+                        && configuration.transcriptionModel
+                            != savedConfiguration.transcriptionModel
+                )
+        if
+            transcriptionChanged
+                || transcriptionProviderSetupChanged
+        {
+            result.insert(.transcription)
+        }
+
+        let postProcessingChanged =
+            (
+                configuration.postProcessingMode == .enabled
+                    && savedConfiguration.postProcessingMode == .disabled
+            )
+                || configuration.postProcessingProvider
+                    != savedConfiguration.postProcessingProvider
+                || (
+                    configuration.postProcessingModel.isCustom
+                        && configuration.postProcessingModel
+                            != savedConfiguration.postProcessingModel
+                )
+        let postProcessingProviderSetupChanged =
+            providerRegistry.settingsModule(
+                for: configuration.postProcessingProvider
+            )?.isDirty ?? false
+        if
+            configuration.postProcessingMode == .enabled,
+            postProcessingChanged
+                || (
+                    presentationMode == .full
+                        && postProcessingProviderSetupChanged
+                )
+        {
+            result.insert(.postProcessing)
+        }
+        return result
+    }
+
+    private func selectedProvider(
+        for capability: ProviderCapability,
+        configuration: AppConfiguration
+    ) -> ProviderID {
+        switch capability {
+        case .transcription:
+            configuration.transcriptionProvider
+        case .postProcessing:
+            configuration.postProcessingProvider
+        }
+    }
+
+    private func validatedDraftConfiguration() -> AppConfiguration? {
+        guard let configuration = draftConfiguration() else {
+            return nil
+        }
+
+        if resolvedTranscriptionModel.isEmpty {
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .transcription,
+                    provider: nil,
+                    field: .transcriptionModel,
+                    message: "Enter a transcription model identifier."
+                )
+            )
+        }
+
+        if
+            !languageCode.isEmpty,
+            !availableLanguages.contains(where: { $0.id == languageCode })
+        {
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .transcription,
+                    provider: nil,
+                    field: .language,
+                    message:
+                        "Choose a language supported by the selected provider or Automatic."
+                )
+            )
+        }
+
+        if
+            postProcessingEnabled,
+            resolvedPostProcessingModel.isEmpty
+        {
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .postProcessing,
+                    provider: nil,
+                    field: .postProcessingModel,
+                    message: "Enter a post-processing model identifier."
+                )
+            )
+        }
+
+        let transcriptionReadiness =
+            providerRegistry.settingsModule(
+                for: configuration.transcriptionProvider
+            )?.readiness
+            ?? .setupRequired("Configure a transcription provider.")
+        if
+            isFirstRun
+                || presentationMode == .transcriptionRepair,
+            !isUsable(transcriptionReadiness)
+        {
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .providers,
+                    provider: configuration.transcriptionProvider,
+                    field: .credential(
+                        configuration.transcriptionProvider
+                    ),
+                    message:
+                        transcriptionReadiness.message
+                        ?? "Configure a transcription provider."
+                )
+            )
+        }
+
+        if postProcessingEnabled {
+            let readiness = providerRegistry.readiness(
+                for: configuration.postProcessingProvider,
+                capability: .postProcessing
+            )
+            let draftReadiness =
+                providerRegistry.settingsModule(
+                    for: configuration.postProcessingProvider
+                )?.readiness
+                ?? readiness
+            let newlyEnabled =
+                savedConfiguration.postProcessingMode == .disabled
+            if newlyEnabled, !isUsable(draftReadiness) {
+                replaceIssue(
+                    ConfigurationIssue(
+                        destination: .providers,
+                        provider: configuration.postProcessingProvider,
+                        field: .credential(
+                            configuration.postProcessingProvider
+                        ),
+                        message:
+                            draftReadiness.message
+                            ?? "Configure a post-processing provider."
+                    )
+                )
+            }
+        }
+
+        return issues.isEmpty ? configuration : nil
+    }
+
+    private func draftConfiguration() -> AppConfiguration? {
+        var configuration = savedConfiguration
+        configuration.transcription.modelsByProvider =
+            transcriptionModelsByProvider
+        configuration.transcription.activeProvider =
+            transcriptionProviderChoice
+        configuration.transcription.setModel(
+            transcriptionModelChoice == Self.customModelChoice
+                ? .custom(resolvedTranscriptionModel)
+                : .curated(resolvedTranscriptionModel),
+            for: transcriptionProviderChoice
+        )
+        configuration.language =
+            presentationMode == .transcriptionRepair
+            ? repairContext?.language ?? savedConfiguration.language
+            : (
+                languageCode.isEmpty
+                ? .automatic
+                : .explicit(languageCode)
+            )
+        configuration.postProcessingMode =
+            postProcessingEnabled ? .enabled : .disabled
+        configuration.postProcessing.modelsByProvider =
+            postProcessingModelsByProvider
+        configuration.postProcessing.activeProvider =
+            postProcessingProviderChoice
+        configuration.postProcessing.setModel(
+            postProcessingModelChoice == Self.customModelChoice
+                ? .custom(resolvedPostProcessingModel)
+                : .curated(resolvedPostProcessingModel),
+            for: postProcessingProviderChoice
+        )
+        return configuration
+    }
+
+    private func configurationDraft() -> ConfigurationDraft? {
+        guard let configuration = draftConfiguration() else {
+            return nil
+        }
+        return ConfigurationDraft(
+            configuration: configuration,
+            shortcut: globalShortcut,
+            soundCuesEnabled: soundCuesEnabled
+        )
+    }
+
+    private var savedBaseline: ConfigurationDraft {
+        ConfigurationDraft(
+            configuration: savedConfiguration,
+            shortcut: savedShortcut,
+            soundCuesEnabled: savedSoundCuesEnabled
+        )
     }
 
     private var resolvedTranscriptionModel: String {
@@ -585,75 +1004,230 @@ final class ConfigurationViewModel: ObservableObject {
         return postProcessingModelChoice
     }
 
-    private func makeConfiguration() throws -> AppConfiguration {
-        let transcriptionModel = resolvedTranscriptionModel
-        guard !transcriptionModel.isEmpty else {
-            throw ConfigurationInputError.missingTranscriptionModel
-        }
-
-        let postProcessingModel = resolvedPostProcessingModel
-        if postProcessingEnabled && postProcessingModel.isEmpty {
-            throw ConfigurationInputError.missingPostProcessingModel
-        }
-
-        return AppConfiguration(
-            transcriptionProvider: .openAI,
-            transcriptionModel: transcriptionModelChoice
-                == Self.customModelChoice
-                ? .custom(transcriptionModel)
-                : .curated(transcriptionModel),
-            language: languageCode.isEmpty
-                ? .automatic
-                : .explicit(languageCode),
-            postProcessingMode: postProcessingEnabled ? .enabled : .disabled,
-            postProcessingProvider: .openAI,
-            postProcessingModel: postProcessingModelChoice
-                == Self.customModelChoice
-                ? .custom(postProcessingModel)
-                : .curated(postProcessingModel)
-        )
-    }
-
     private func apply(_ configuration: AppConfiguration) {
-        if configuration.transcriptionModel.isCustom {
-            transcriptionModelChoice = Self.customModelChoice
-            transcriptionCustomModel =
-                configuration.transcriptionModel.identifier
-        } else {
-            transcriptionModelChoice =
-                configuration.transcriptionModel.identifier
-            transcriptionCustomModel = ""
-        }
-
+        transcriptionModelsByProvider =
+            configuration.transcription.modelsByProvider
+        postProcessingModelsByProvider =
+            configuration.postProcessing.modelsByProvider
+        transcriptionProviderChoice =
+            configuration.transcriptionProvider
+        applyTranscriptionModel(configuration.transcriptionModel)
         languageCode = configuration.language.providerIdentifier ?? ""
         postProcessingEnabled =
             configuration.postProcessingMode == .enabled
+        postProcessingProviderChoice =
+            configuration.postProcessingProvider
+        applyPostProcessingModel(configuration.postProcessingModel)
+    }
 
-        if configuration.postProcessingModel.isCustom {
-            postProcessingModelChoice = Self.customModelChoice
-            postProcessingCustomModel =
-                configuration.postProcessingModel.identifier
+    private func applyTranscriptionModel(_ model: ModelSelection) {
+        if model.isCustom {
+            transcriptionModelChoice = Self.customModelChoice
+            transcriptionCustomModel = model.identifier
         } else {
-            postProcessingModelChoice =
-                configuration.postProcessingModel.identifier
+            transcriptionModelChoice = model.identifier
+            transcriptionCustomModel = ""
+        }
+    }
+
+    private func applyPostProcessingModel(_ model: ModelSelection) {
+        if model.isCustom {
+            postProcessingModelChoice = Self.customModelChoice
+            postProcessingCustomModel = model.identifier
+        } else {
+            postProcessingModelChoice = model.identifier
             postProcessingCustomModel = ""
         }
     }
-}
 
-private enum ConfigurationInputError: LocalizedError {
-    case missingCredential
-    case missingTranscriptionModel
-    case missingPostProcessingModel
+    private func stashCurrentTranscriptionModel() {
+        guard !resolvedTranscriptionModel.isEmpty else {
+            return
+        }
+        transcriptionModelsByProvider[transcriptionProviderChoice] =
+            transcriptionModelChoice == Self.customModelChoice
+            ? .custom(resolvedTranscriptionModel)
+            : .curated(resolvedTranscriptionModel)
+    }
 
-    var errorDescription: String? {
-        switch self {
-        case .missingCredential:
-            "Enter an OpenAI API key."
-        case .missingTranscriptionModel:
-            "Enter a custom transcription model identifier."
-        case .missingPostProcessingModel:
-            "Enter a custom post-processing model identifier."
+    private func stashCurrentPostProcessingModel() {
+        guard !resolvedPostProcessingModel.isEmpty else {
+            return
+        }
+        postProcessingModelsByProvider[postProcessingProviderChoice] =
+            postProcessingModelChoice == Self.customModelChoice
+            ? .custom(resolvedPostProcessingModel)
+            : .curated(resolvedPostProcessingModel)
+    }
+
+    private func defaultModel(
+        for provider: ProviderID,
+        capability: ProviderCapability
+    ) -> ModelSelection {
+        if
+            let identifier =
+                descriptor(for: provider)?
+                .capabilities[capability]?.defaultModelID
+        {
+            return .curated(identifier)
+        }
+        return .custom("")
+    }
+
+    private func availableProviders(
+        for capability: ProviderCapability
+    ) -> [ProviderDescriptor] {
+        let active = capability == .transcription
+            ? transcriptionProviderChoice
+            : postProcessingProviderChoice
+        return providerRegistry.settingsModules.compactMap { module in
+            guard
+                module.descriptor.capabilities[capability] != nil,
+                module.hasProvisionalConfiguration || module.id == active
+            else {
+                return nil
+            }
+            if
+                presentationMode == .transcriptionRepair,
+                capability == .transcription,
+                let repairContext,
+                let descriptor =
+                    module.descriptor.capabilities[.transcription],
+                !isCompatible(
+                    descriptor,
+                    with: repairContext
+                )
+            {
+                return nil
+            }
+            return module.descriptor
+        }
+    }
+
+    private func isCompatible(
+        _ descriptor: ProviderCapabilityDescriptor,
+        with context: TranscriptionRepairContext
+    ) -> Bool {
+        let accepted = descriptor.acceptedAudioFileExtensions
+        if
+            !accepted.isEmpty,
+            !accepted.contains(
+                context.recordingProfile.fileExtension.lowercased()
+            )
+        {
+            return false
+        }
+
+        guard case .explicit(let language) = context.language else {
+            return true
+        }
+        switch descriptor.languageSupport {
+        case .notApplicable, .automaticOnly:
+            return false
+        case .catalog(let languages):
+            return languages.contains { $0.id == language }
+        }
+    }
+
+    private func isUsable(_ readiness: ProviderReadiness) -> Bool {
+        switch readiness.state {
+        case .configured, .pendingValidation:
+            true
+        case
+            .setupRequired,
+            .attentionRequired,
+            .willDisconnect:
+            false
+        }
+    }
+
+    private func mapSaveError(_ error: Error) {
+        if let failure = error as? ProviderSettingsValidationFailure {
+            mapProviderValidationFailure(failure)
+            return
+        }
+        let provider =
+            selectedProviderDetail ?? transcriptionProviderChoice
+        let issue = ConfigurationIssue(
+            destination: selectedDestination,
+            provider: provider,
+            field: .provider(provider),
+            message: error.localizedDescription
+        )
+        replaceIssue(issue)
+    }
+
+    private func mapProviderValidationFailure(
+        _ failure: ProviderSettingsValidationFailure
+    ) {
+        switch failure.kind {
+        case .authentication, .providerSetup:
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .providers,
+                    provider: failure.provider,
+                    field: .credential(failure.provider),
+                    message: failure.message
+                )
+            )
+            if transcriptionProviderChoice == failure.provider {
+                replaceIssue(
+                    ConfigurationIssue(
+                        destination: .transcription,
+                        provider: failure.provider,
+                        field: .transcriptionProvider,
+                        message: failure.message
+                    )
+                )
+            }
+            if
+                postProcessingEnabled,
+                postProcessingProviderChoice == failure.provider
+            {
+                replaceIssue(
+                    ConfigurationIssue(
+                        destination: .postProcessing,
+                        provider: failure.provider,
+                        field: .postProcessingProvider,
+                        message: failure.message
+                    )
+                )
+            }
+        case .model, .language, .unavailable, .unknown:
+            let destination: SettingsDestination =
+                failure.capability == .postProcessing
+                ? .postProcessing
+                : .transcription
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: destination,
+                    provider: failure.provider,
+                    field:
+                        destination == .postProcessing
+                        ? .postProcessingModel
+                        : (
+                            failure.kind == .language
+                            ? .language
+                            : .transcriptionModel
+                        ),
+                    message: failure.message
+                )
+            )
+        }
+    }
+
+    private func replaceIssue(_ issue: ConfigurationIssue) {
+        issues.removeAll { $0.field == issue.field }
+        issues.append(issue)
+    }
+
+    private func routeToFirstIssue() {
+        guard let issue = issues.first else {
+            return
+        }
+        selectedDestination = issue.destination
+        if issue.destination == .providers {
+            selectedProviderDetail = issue.provider
         }
     }
 }

@@ -61,7 +61,8 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
                 OpenAIModelCatalog.transcriptionAPIIdentifier(for: selection),
             isSafeMultipartValue(identifier)
         else {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .model,
                 message: "The transcription model is not configured correctly."
             )
         }
@@ -81,7 +82,8 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
                         .transcriptionLanguageAPIIdentifier(for: selection),
                 isSafeMultipartValue(identifier)
             else {
-                throw ProviderOperationFailure.configuration(
+                throw ProviderOperationFailure.scopedConfiguration(
+                    kind: .language,
                     message: "The transcription language is not supported."
                 )
             }
@@ -95,7 +97,8 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         do {
             guard let savedCredential = try credentialStore.readCredential()
             else {
-                throw ProviderOperationFailure.configuration(
+                throw ProviderOperationFailure.scopedConfiguration(
+                    kind: .authentication,
                     message: "The OpenAI API key is missing."
                 )
             }
@@ -103,13 +106,15 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         } catch let failure as ProviderOperationFailure {
             throw failure
         } catch {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .providerSetup,
                 message: "The OpenAI API key could not be read from Keychain."
             )
         }
 
         guard !credential.isEmpty else {
-            throw ProviderOperationFailure.configuration(
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .authentication,
                 message: "The OpenAI API key is missing."
             )
         }
@@ -303,11 +308,13 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
 
         switch response.statusCode {
         case 401:
-            return .configuration(
+            return .scopedConfiguration(
+                kind: .authentication,
                 message: "OpenAI rejected the saved API key."
             )
         case 403, 404:
-            return .configuration(
+            return .scopedConfiguration(
+                kind: .model,
                 message:
                     "The selected transcription model is unavailable for this API key."
             )
@@ -331,7 +338,12 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
                             && parameter == "model"
                     )
             {
-                return .configuration(
+                let kind: ProviderConfigurationIssueKind =
+                    type == "invalid_api_key"
+                    ? .authentication
+                    : .model
+                return .scopedConfiguration(
+                    kind: kind,
                     message:
                         "OpenAI rejected the saved transcription configuration."
                 )
