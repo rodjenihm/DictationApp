@@ -190,6 +190,8 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
             (data, response) = try await session.data(for: request)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            throw CancellationError()
         } catch {
             throw OpenAIValidationError.transport
         }

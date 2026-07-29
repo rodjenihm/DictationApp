@@ -3,7 +3,8 @@ import Foundation
 final class OpenAITranscriptionProvider: TranscriptionProvider {
     let providerID = ProviderID.openAI
 
-    private static let maximumUploadBytes = 25 * 1_024 * 1_024
+    nonisolated private static let maximumUploadBytes =
+        25 * 1_024 * 1_024
 
     private let credentialStore: any CredentialStore
     private let session: URLSession
@@ -38,19 +39,42 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
 
         let model = try modelIdentifier(for: request.model)
         let language = try languageIdentifier(for: request.language)
-        let audioData = try loadAudioData(from: request.artifact)
         let credential = try resolveCredential()
+        let urlRequest = try await Self.prepareRequest(
+            artifact: request.artifact,
+            baseURL: baseURL,
+            credential: credential,
+            model: model,
+            language: language
+        )
+        try Task.checkCancellation()
 
-        return try await retryExecutor.execute { [self] in
+        return try await retryExecutor.execute { [self, urlRequest] in
             try Task.checkCancellation()
-            let urlRequest = try makeRequest(
-                credential: credential,
-                model: model,
-                language: language,
-                audioData: audioData
-            )
             return try await perform(urlRequest)
         }
+    }
+
+    @concurrent
+    private static func prepareRequest(
+        artifact: AudioArtifact,
+        baseURL: URL,
+        credential: String,
+        model: String,
+        language: String?
+    ) async throws -> URLRequest {
+        try Task.checkCancellation()
+        let audioData = try loadAudioData(from: artifact)
+        try Task.checkCancellation()
+        let request = try makeRequest(
+            baseURL: baseURL,
+            credential: credential,
+            model: model,
+            language: language,
+            audioData: audioData
+        )
+        try Task.checkCancellation()
+        return request
     }
 
     private func modelIdentifier(
@@ -121,7 +145,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         return credential
     }
 
-    private func loadAudioData(
+    nonisolated private static func loadAudioData(
         from artifact: AudioArtifact
     ) throws -> Data {
         guard
@@ -153,7 +177,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         return audioData
     }
 
-    private func invalidAudioFailure(
+    nonisolated private static func invalidAudioFailure(
         for artifact: AudioArtifact
     ) -> ProviderOperationFailure {
         if artifact.fileSize >= Self.maximumUploadBytes {
@@ -167,7 +191,8 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         )
     }
 
-    private func makeRequest(
+    nonisolated private static func makeRequest(
+        baseURL: URL,
         credential: String,
         model: String,
         language: String?,
@@ -455,11 +480,11 @@ private struct OpenAIErrorResponse: Decodable {
 }
 
 private extension Data {
-    mutating func appendUTF8(_ string: String) {
+    nonisolated mutating func appendUTF8(_ string: String) {
         append(Data(string.utf8))
     }
 
-    mutating func appendMultipartField(
+    nonisolated mutating func appendMultipartField(
         name: String,
         value: String,
         boundary: String
@@ -471,7 +496,7 @@ private extension Data {
         appendUTF8("\(value)\r\n")
     }
 
-    mutating func appendMultipartFile(
+    nonisolated mutating func appendMultipartFile(
         name: String,
         filename: String,
         contentType: String,

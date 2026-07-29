@@ -27,6 +27,8 @@ final class DictationCoordinator: ObservableObject {
     private var activeClipboardTransaction:
         (any ClipboardTransactionHandling)?
     private var activeTextPayload: SessionTextPayload?
+    private var pendingCancellationCue:
+        (sessionIdentifier: UUID, enabled: Bool)?
 
     init(
         recorder: any AudioRecorder,
@@ -51,6 +53,12 @@ final class DictationCoordinator: ObservableObject {
             [weak self] identifier, outcome in
             self?.submit(
                 .unexpectedCapture(outcome),
+                sessionIdentifier: identifier
+            )
+        }
+        self.recorder.onCancellationTeardownCompleted = {
+            [weak self] identifier in
+            self?.playCancellationCueAfterTeardown(
                 sessionIdentifier: identifier
             )
         }
@@ -128,10 +136,11 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
+        pendingCancellationCue = nil
         let token = SessionToken()
         let (events, continuation) = AsyncStream.makeStream(
             of: PipelineEvent.self,
-            bufferingPolicy: .bufferingNewest(8)
+            bufferingPolicy: .unbounded
         )
 
         currentToken = token
@@ -1138,15 +1147,35 @@ final class DictationCoordinator: ObservableObject {
             sessionIdentifier == nil
                 || sessionIdentifier == currentToken.id
         else {
-            if case .unexpectedCapture(let outcome) = event,
-                case .partial(let artifact) = outcome
-            {
-                fileStore.delete(artifact.url)
-            }
+            deletePartialArtifact(in: event)
             return
         }
 
-        pipelineEvents?.yield(event)
+        guard let pipelineEvents else {
+            deletePartialArtifact(in: event)
+            return
+        }
+
+        switch pipelineEvents.yield(event) {
+        case .enqueued:
+            break
+        case .dropped(let droppedEvent):
+            deletePartialArtifact(in: droppedEvent)
+        case .terminated:
+            deletePartialArtifact(in: event)
+        @unknown default:
+            deletePartialArtifact(in: event)
+        }
+    }
+
+    private func deletePartialArtifact(in event: PipelineEvent) {
+        guard
+            case .unexpectedCapture(let outcome) = event,
+            case .partial(let artifact) = outcome
+        else {
+            return
+        }
+        fileStore.delete(artifact.url)
     }
 
     private func requireCurrent(_ token: SessionToken) throws {
@@ -1223,6 +1252,10 @@ final class DictationCoordinator: ObservableObject {
         }
 
         let cuesEnabled = sessionSoundCuesEnabled
+        pendingCancellationCue =
+            playCue && cuesEnabled
+            ? (token.id, true)
+            : nil
 
         // Invalidate ownership before cancelling work so no suspended callback
         // can publish or perform a late side effect.
@@ -1259,12 +1292,25 @@ final class DictationCoordinator: ObservableObject {
             "Session cancelled; clipboard restoration owned=\(restoredClipboard, privacy: .public)"
         )
 
-        if playCue {
-            soundCuePlayer.enqueue(
-                .sessionCancelled,
-                enabled: cuesEnabled
-            )
+    }
+
+    private func playCancellationCueAfterTeardown(
+        sessionIdentifier: UUID
+    ) {
+        guard
+            let pendingCancellationCue,
+            pendingCancellationCue.sessionIdentifier == sessionIdentifier
+        else {
+            return
         }
+        self.pendingCancellationCue = nil
+        guard currentToken == nil else {
+            return
+        }
+        soundCuePlayer.enqueue(
+            .sessionCancelled,
+            enabled: pendingCancellationCue.enabled
+        )
     }
 
     private func resetSessionWithoutCue() {

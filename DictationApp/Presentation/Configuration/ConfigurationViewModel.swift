@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Observation
 import OSLog
 
 enum SettingsDestination: String, Codable, CaseIterable, Identifiable {
@@ -88,10 +89,11 @@ struct ConfigurationDraft: Equatable {
 }
 
 @MainActor
-final class ConfigurationViewModel: ObservableObject {
+@Observable
+final class ConfigurationViewModel {
     static let customModelChoice = "__custom__"
 
-    @Published var selectedDestination: SettingsDestination {
+    var selectedDestination: SettingsDestination {
         didSet {
             guard selectedDestination != oldValue else {
                 return
@@ -106,48 +108,56 @@ final class ConfigurationViewModel: ObservableObject {
             }
         }
     }
-    @Published var selectedProviderDetail: ProviderID?
+    var selectedProviderDetail: ProviderID?
 
-    @Published var transcriptionProviderChoice =
+    var transcriptionProviderChoice =
         AppConfiguration.default.transcriptionProvider
-    @Published var transcriptionModelChoice = ""
-    @Published var transcriptionCustomModel = ""
-    @Published var languageCode = ""
-    @Published var postProcessingEnabled = false
-    @Published var postProcessingProviderChoice =
+    var transcriptionModelChoice = ""
+    var transcriptionCustomModel = ""
+    var languageCode = ""
+    var postProcessingEnabled = false
+    var postProcessingProviderChoice =
         AppConfiguration.default.postProcessingProvider
-    @Published var postProcessingModelChoice = ""
-    @Published var postProcessingCustomModel = ""
-    @Published var soundCuesEnabled = true
-    @Published private(set) var globalShortcut =
+    var postProcessingModelChoice = ""
+    var postProcessingCustomModel = ""
+    var soundCuesEnabled = true
+    private(set) var globalShortcut =
         GlobalShortcut.defaultShortcut
 
-    @Published private(set) var microphoneStatus:
+    private(set) var microphoneStatus:
         MicrophonePermissionStatus = .notDetermined
-    @Published private(set) var accessibilityStatus:
+    private(set) var accessibilityStatus:
         AccessibilityPermissionStatus = .notGranted
-    @Published private(set) var shortcutErrorMessage: String?
-    @Published private(set) var successMessage: String?
-    @Published private(set) var issues: [ConfigurationIssue] = []
-    @Published private(set) var hasCompletedFirstRun = false
-    @Published private(set) var isValidating = false
-    @Published private(set) var presentationMode:
+    private(set) var shortcutErrorMessage: String?
+    private(set) var successMessage: String?
+    private(set) var issues: [ConfigurationIssue] = []
+    private(set) var hasCompletedFirstRun = false
+    private(set) var isValidating = false
+    private(set) var presentationMode:
         ConfigurationPresentationMode = .full
-    @Published private(set) var sessionAccess:
+    private(set) var sessionAccess:
         ConfigurationSessionAccess = .editable
-    @Published private(set) var repairContext:
+    private(set) var repairContext:
         TranscriptionRepairContext?
 
+    @ObservationIgnored
     var onConfigurationChanged: (() -> Void)?
+    @ObservationIgnored
     var onTranscriptionRepairValidated:
         ((TranscriptionRepair) -> Void)?
+    @ObservationIgnored
     var onRequestClose: (() -> Void)?
 
+    @ObservationIgnored
     let providerRegistry: ProviderRegistry
 
+    @ObservationIgnored
     private let settingsStore: SettingsStore
+    @ObservationIgnored
     private let permissionService: PermissionService
+    @ObservationIgnored
     private let shortcutService: GlobalShortcutService
+    @ObservationIgnored
     private let providerRuntimeHealth:
         ProviderRuntimeHealthStore
     private var savedConfiguration: AppConfiguration = .default
@@ -157,10 +167,16 @@ final class ConfigurationViewModel: ObservableObject {
         [ProviderID: ModelSelection] = [:]
     private var postProcessingModelsByProvider:
         [ProviderID: ModelSelection] = [:]
+    private var postProcessingHealthRevision = 0
+    private var providerSettingsRevision = 0
+    @ObservationIgnored
     private var postProcessingHealthCancellable: AnyCancellable?
+    @ObservationIgnored
     private var providerCancellables: [AnyCancellable] = []
+    @ObservationIgnored
     private var validationTask:
         Task<ConfigurationSaveResult, Never>?
+    @ObservationIgnored
     private var persistsTopLevelNavigation = true
 
     init(
@@ -185,7 +201,7 @@ final class ConfigurationViewModel: ObservableObject {
         postProcessingHealthCancellable =
             providerRuntimeHealth.$attentions.sink {
                 [weak self] _ in
-                self?.objectWillChange.send()
+                self?.postProcessingHealthRevision &+= 1
             }
         providerCancellables =
             providerRegistry.settingsModules.map { module in
@@ -194,7 +210,7 @@ final class ConfigurationViewModel: ObservableObject {
                         $0.provider == module.id
                             && $0.destination == .providers
                     }
-                    self?.objectWillChange.send()
+                    self?.providerSettingsRevision &+= 1
                 }
             }
         reload()
@@ -224,6 +240,7 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     var hasUnsavedChanges: Bool {
+        _ = providerSettingsRevision
         guard let draft = configurationDraft() else {
             return true
         }
@@ -324,6 +341,7 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     var postProcessingAttentionMessage: String? {
+        _ = postProcessingHealthRevision
         guard savedConfiguration.postProcessingMode == .enabled else {
             return nil
         }
@@ -335,7 +353,8 @@ final class ConfigurationViewModel: ObservableObject {
     }
 
     func providerReadiness(_ id: ProviderID) -> ProviderReadiness {
-        providerRegistry.settingsModule(for: id)?.readiness
+        _ = providerSettingsRevision
+        return providerRegistry.settingsModule(for: id)?.readiness
             ?? .setupRequired("Provider setup is unavailable.")
     }
 
@@ -377,6 +396,7 @@ final class ConfigurationViewModel: ObservableObject {
                 || draft.postProcessing
                     != savedConfiguration.postProcessing
         case .providers:
+            _ = providerSettingsRevision
             return providerRegistry.settingsModules.contains(
                 where: \.isDirty
             )
@@ -1077,6 +1097,7 @@ final class ConfigurationViewModel: ObservableObject {
     private func availableProviders(
         for capability: ProviderCapability
     ) -> [ProviderDescriptor] {
+        _ = providerSettingsRevision
         let active = capability == .transcription
             ? transcriptionProviderChoice
             : postProcessingProviderChoice

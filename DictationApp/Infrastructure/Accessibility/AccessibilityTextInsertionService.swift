@@ -35,13 +35,21 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             return .failed
         }
 
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
         var isSettable = DarwinBoolean(false)
+        let settableResult = AXUIElementIsAttributeSettable(
+            focusedElement,
+            kAXSelectedTextAttribute as CFString,
+            &isSettable
+        )
+        guard !Task.isCancelled else {
+            return .failed
+        }
         guard
-            AXUIElementIsAttributeSettable(
-                focusedElement,
-                kAXSelectedTextAttribute as CFString,
-                &isSettable
-            ) == .success,
+            settableResult == .success,
             isSettable.boolValue
         else {
             AppLog.insertion.notice(
@@ -50,11 +58,66 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             return .failed
         }
 
-        let targetValue = stringAttribute(
+        let exposedTargetValue = stringAttribute(
             kAXValueAttribute,
             from: focusedElement
         )
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
+        let placeholderValue = stringAttribute(
+            kAXPlaceholderValueAttribute,
+            from: focusedElement
+        )
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
+        let descriptionValue = stringAttribute(
+            kAXDescriptionAttribute,
+            from: focusedElement
+        )
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
+        let exposesDescriptionAsEmptyContent =
+            descriptionValue.map {
+                !$0.isEmpty
+                    && exposedTargetValue != $0
+                    && containsStaticText(
+                        matching: $0,
+                        in: focusedElement,
+                        remainingDepth: 4
+                    )
+            }
+            ?? false
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
+        let targetValue: String?
+        if
+            (
+                placeholderValue != nil
+                    && exposedTargetValue == placeholderValue
+            )
+                || exposesDescriptionAsEmptyContent
+        {
+            targetValue = ""
+            AppLog.insertion.info(
+                "Focused editor exposed semantic placeholder content and was treated as empty"
+            )
+        } else {
+            targetValue = exposedTargetValue
+        }
+
         let selectedRange = selectedTextRange(from: focusedElement)
+        guard !Task.isCancelled else {
+            return .failed
+        }
+
         let insertedText = TextInsertionBoundaryPolicy.preparedText(
             text,
             targetValue: targetValue,
@@ -99,12 +162,29 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         clipboardTransaction.holdRestoration(
             for: clipboardRestorationDelay
         )
-        await waitForPasteConsumption()
+        do {
+            try await waitForPasteConsumption()
+        } catch is CancellationError {
+            AppLog.insertion.notice(
+                "Insertion verification cancelled after paste dispatch"
+            )
+            return .failed
+        } catch {
+            return .failed
+        }
+
+        guard !Task.isCancelled else {
+            return .failed
+        }
 
         let actualValue = stringAttribute(
             kAXValueAttribute,
             from: focusedElement
         )
+
+        guard !Task.isCancelled else {
+            return .failed
+        }
 
         if insertedText != text {
             _ = clipboardTransaction.replaceOwnedContents(with: text)
@@ -161,8 +241,8 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         return true
     }
 
-    private func waitForPasteConsumption() async {
-        try? await Task.sleep(for: pasteConsumptionDelay)
+    private func waitForPasteConsumption() async throws {
+        try await Task.sleep(for: pasteConsumptionDelay)
     }
 
     private func focusedElement(
@@ -200,6 +280,69 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         return value as? String
+    }
+
+    private func containsStaticText(
+        matching expectedValue: String,
+        in element: AXUIElement,
+        remainingDepth: Int
+    ) -> Bool {
+        guard !Task.isCancelled else {
+            return false
+        }
+
+        if
+            stringAttribute(
+                kAXRoleAttribute,
+                from: element
+            ) == kAXStaticTextRole as String,
+            stringAttribute(
+                kAXValueAttribute,
+                from: element
+            ) == expectedValue
+        {
+            return true
+        }
+
+        guard remainingDepth > 0 else {
+            return false
+        }
+
+        return elementArrayAttribute(
+            kAXChildrenAttribute,
+            from: element
+        )
+        .contains {
+            containsStaticText(
+                matching: expectedValue,
+                in: $0,
+                remainingDepth: remainingDepth - 1
+            )
+        }
+    }
+
+    private func elementArrayAttribute(
+        _ attribute: String,
+        from element: AXUIElement
+    ) -> [AXUIElement] {
+        var value: CFTypeRef?
+        guard
+            AXUIElementCopyAttributeValue(
+                element,
+                attribute as CFString,
+                &value
+            ) == .success,
+            let values = value as? [AnyObject]
+        else {
+            return []
+        }
+
+        return values.compactMap { value in
+            guard CFGetTypeID(value) == AXUIElementGetTypeID() else {
+                return nil
+            }
+            return unsafeBitCast(value, to: AXUIElement.self)
+        }
     }
 
     private func selectedTextRange(

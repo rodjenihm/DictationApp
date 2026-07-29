@@ -24,6 +24,8 @@ enum UnexpectedCaptureOutcome: Sendable {
 protocol AudioRecorder: AnyObject {
     var onUnexpectedCaptureFailure:
         ((UUID, UnexpectedCaptureOutcome) -> Void)? { get set }
+    var onCancellationTeardownCompleted:
+        ((UUID) -> Void)? { get set }
 
     func prepare(
         profile: RecordingProfile,
@@ -50,6 +52,8 @@ final class AVFoundationAudioRecorder:
 {
     var onUnexpectedCaptureFailure:
         ((UUID, UnexpectedCaptureOutcome) -> Void)?
+    var onCancellationTeardownCompleted:
+        ((UUID) -> Void)?
 
     private let fileStore: RecordingFileStore
     private let captureQueue = DispatchQueue(
@@ -116,6 +120,7 @@ final class AVFoundationAudioRecorder:
             else {
                 await stopCaptureSession(preparedContext)
                 fileStore.delete(outputURL)
+                onCancellationTeardownCompleted?(sessionIdentifier)
                 throw CancellationError()
             }
 
@@ -132,8 +137,13 @@ final class AVFoundationAudioRecorder:
                 inputDeviceName: preparedContext.inputDeviceName
             )
         } catch {
-            cancelledSessionIdentifiers.remove(sessionIdentifier)
+            let wasCancelled =
+                cancelledSessionIdentifiers.remove(sessionIdentifier)
+                != nil
             fileStore.delete(outputURL)
+            if wasCancelled {
+                onCancellationTeardownCompleted?(sessionIdentifier)
+            }
             AppLog.capture.error("Capture preparation failed")
             throw error
         }
@@ -212,6 +222,8 @@ final class AVFoundationAudioRecorder:
         else {
             if preparingSessionIdentifiers.contains(sessionIdentifier) {
                 cancelledSessionIdentifiers.insert(sessionIdentifier)
+            } else {
+                onCancellationTeardownCompleted?(sessionIdentifier)
             }
             return
         }
@@ -224,17 +236,30 @@ final class AVFoundationAudioRecorder:
         finishContinuation = nil
         isExpectedFinish = false
 
-        captureQueue.sync {
+        let captureQueue = captureQueue
+        let outputURL = context.outputURL
+        let cancelledIdentifier = context.sessionIdentifier
+        captureQueue.async { [weak self, context] in
+            Self.preconditionOnCaptureQueue(captureQueue)
             if context.output.isRecording {
                 context.output.stopRecording()
             }
             if context.session.isRunning {
                 context.session.stopRunning()
             }
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    return
+                }
+                fileStore.delete(outputURL)
+                cancelledSessionIdentifiers.remove(cancelledIdentifier)
+                onCancellationTeardownCompleted?(cancelledIdentifier)
+                AppLog.capture.notice(
+                    "Capture cancellation teardown completed"
+                )
+            }
         }
-        fileStore.delete(context.outputURL)
-        cancelledSessionIdentifiers.remove(sessionIdentifier)
-        AppLog.capture.notice("Capture cancelled synchronously")
+        AppLog.capture.notice("Capture cancellation teardown scheduled")
     }
 
     func shutdownImmediately(sessionIdentifier: UUID) {
@@ -622,9 +647,19 @@ final class AVFoundationAudioRecorder:
             AVErrorRecordingSuccessfullyFinishedKey
         ] as? Bool == true
     }
+
+    nonisolated private static func preconditionOnCaptureQueue(
+        _ captureQueue: DispatchQueue
+    ) {
+        dispatchPrecondition(condition: .onQueue(captureQueue))
+    }
 }
 
-private final class CaptureContext: @unchecked Sendable {
+// SAFETY: Swift-owned mutable fields are accessed only from the main actor.
+// AVFoundation control operations are serialized on AVFoundationAudioRecorder's
+// capture queue. Immutable framework object identities cross isolation only for
+// delegate matching.
+nonisolated private final class CaptureContext: @unchecked Sendable {
     let session: AVCaptureSession
     let device: AVCaptureDevice
     let output: AVCaptureAudioFileOutput

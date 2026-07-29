@@ -193,6 +193,8 @@ final class OpenAIProviderSettingsModule:
                         ]?.identifier
                         ?? "gpt-4o-transcribe"
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw validationFailure(
                     error,
@@ -208,6 +210,8 @@ final class OpenAIProviderSettingsModule:
                     credential: credential,
                     model: configuration.transcriptionModel.identifier
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw validationFailure(
                     error,
@@ -225,6 +229,8 @@ final class OpenAIProviderSettingsModule:
                     credential: credential,
                     model: configuration.postProcessingModel.identifier
                 )
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 throw validationFailure(
                     error,

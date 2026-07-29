@@ -1,5 +1,8 @@
 import AppKit
-import ApplicationServices
+// ApplicationServices currently imports kAXTrustedCheckOptionPrompt as a
+// mutable C global even though this code only reads the system-owned constant
+// on MainActor. Remove @preconcurrency when the SDK annotates it safely.
+@preconcurrency import ApplicationServices
 import AVFoundation
 
 enum MicrophonePermissionStatus: Equatable {
