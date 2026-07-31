@@ -9,7 +9,7 @@ struct RecordingProfile: Equatable, Sendable {
     let warningDuration: TimeInterval
     let maximumDuration: TimeInterval
 
-    static let openAI = RecordingProfile(
+    static let completedM4A = RecordingProfile(
         fileExtension: "m4a",
         sampleRate: 16_000,
         channelCount: 1,
@@ -48,7 +48,7 @@ struct SessionConfiguration: Equatable, Sendable {
         SessionConfiguration(
             transcriptionProvider: repair.provider,
             transcriptionModel: repair.model,
-            language: language,
+            language: repair.language,
             postProcessingMode: postProcessingMode,
             postProcessingProvider: postProcessingProvider,
             postProcessingModel: postProcessingModel,
@@ -78,6 +78,7 @@ struct SessionConfiguration: Equatable, Sendable {
 struct TranscriptionRepair: Equatable, Sendable {
     let provider: ProviderID
     let model: ModelSelection
+    let language: LanguageSelection
 }
 
 struct TranscriptionRepairContext: Equatable, Sendable {

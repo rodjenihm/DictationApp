@@ -51,7 +51,9 @@ private struct ConfigurationProviderDetailView: View {
                             Text(descriptor.displayName)
                                 .font(.title2.weight(.semibold))
                             Text(
-                                "Provider-specific connection and authentication settings."
+                                providerID == .appleOnDevice
+                                    ? "On-device availability, permission, and language assets."
+                                    : "Provider-specific connection and authentication settings."
                             )
                             .foregroundStyle(.secondary)
                         }
@@ -72,9 +74,21 @@ private struct ConfigurationProviderDetailView: View {
                     {
                         ConfigurationSettingsGroup(
                             "Configuration",
-                            systemImage: "key"
+                            systemImage:
+                                providerID == .appleOnDevice
+                                ? "internaldrive"
+                                : "key"
                         ) {
                             module.makeDetailView()
+                        }
+
+                        if
+                            providerID == .appleOnDevice,
+                            viewModel.isFirstRun
+                        {
+                            Button("Use OpenAI instead") {
+                                viewModel.useOpenAIForTranscription()
+                            }
                         }
 
                         ConfigurationSettingsGroup(

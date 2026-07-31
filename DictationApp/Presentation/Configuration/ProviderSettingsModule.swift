@@ -29,9 +29,14 @@ protocol ProviderSettingsModule: AnyObject, ObservableObject {
     var savedReadiness: ProviderReadiness { get }
     var isDirty: Bool { get }
     var hasProvisionalConfiguration: Bool { get }
+    var provisionalTranscriptionLanguage: LanguageSelection? { get }
+    var hasResolvedFirstRunEligibility: Bool { get }
+    var isEligibleForFirstRunDefault: Bool { get }
 
     func reload()
     func discard()
+    func refreshSystemState()
+    func stageTranscriptionLanguage(_ language: LanguageSelection)
     func validate(
         configuration: AppConfiguration,
         stages: Set<ProviderCapability>
@@ -42,9 +47,27 @@ protocol ProviderSettingsModule: AnyObject, ObservableObject {
     func makeDetailView() -> DetailView
 }
 
+extension ProviderSettingsModule {
+    var provisionalTranscriptionLanguage: LanguageSelection? {
+        nil
+    }
+
+    var hasResolvedFirstRunEligibility: Bool {
+        true
+    }
+
+    var isEligibleForFirstRunDefault: Bool {
+        false
+    }
+
+    func refreshSystemState() {}
+
+    func stageTranscriptionLanguage(_ language: LanguageSelection) {}
+}
+
 @MainActor
 final class AnyProviderSettingsModule: ObservableObject, Identifiable {
-    let descriptor: ProviderDescriptor
+    var descriptor: ProviderDescriptor { descriptorClosure() }
 
     var id: ProviderID { descriptor.id }
     var readiness: ProviderReadiness { readinessClosure() }
@@ -53,13 +76,30 @@ final class AnyProviderSettingsModule: ObservableObject, Identifiable {
     }
     var isDirty: Bool { isDirtyClosure() }
     var hasProvisionalConfiguration: Bool { provisionalClosure() }
+    var provisionalTranscriptionLanguage: LanguageSelection? {
+        provisionalTranscriptionLanguageClosure()
+    }
+    var hasResolvedFirstRunEligibility: Bool {
+        hasResolvedFirstRunEligibilityClosure()
+    }
+    var isEligibleForFirstRunDefault: Bool {
+        isEligibleForFirstRunDefaultClosure()
+    }
 
+    private let descriptorClosure: () -> ProviderDescriptor
     private let readinessClosure: () -> ProviderReadiness
     private let savedReadinessClosure: () -> ProviderReadiness
     private let isDirtyClosure: () -> Bool
     private let provisionalClosure: () -> Bool
+    private let provisionalTranscriptionLanguageClosure:
+        () -> LanguageSelection?
+    private let hasResolvedFirstRunEligibilityClosure: () -> Bool
+    private let isEligibleForFirstRunDefaultClosure: () -> Bool
     private let reloadClosure: () -> Void
     private let discardClosure: () -> Void
+    private let refreshSystemStateClosure: () -> Void
+    private let stageTranscriptionLanguageClosure:
+        (LanguageSelection) -> Void
     private let validateClosure:
         (AppConfiguration, Set<ProviderCapability>) async throws -> Void
     private let commitClosure: () throws -> ProviderCommitToken?
@@ -69,13 +109,28 @@ final class AnyProviderSettingsModule: ObservableObject, Identifiable {
     private var cancellable: AnyCancellable?
 
     init<Module: ProviderSettingsModule>(_ module: Module) {
-        descriptor = module.descriptor
+        descriptorClosure = { module.descriptor }
         readinessClosure = { module.readiness }
         savedReadinessClosure = { module.savedReadiness }
         isDirtyClosure = { module.isDirty }
         provisionalClosure = { module.hasProvisionalConfiguration }
+        provisionalTranscriptionLanguageClosure = {
+            module.provisionalTranscriptionLanguage
+        }
+        hasResolvedFirstRunEligibilityClosure = {
+            module.hasResolvedFirstRunEligibility
+        }
+        isEligibleForFirstRunDefaultClosure = {
+            module.isEligibleForFirstRunDefault
+        }
         reloadClosure = { module.reload() }
         discardClosure = { module.discard() }
+        refreshSystemStateClosure = {
+            module.refreshSystemState()
+        }
+        stageTranscriptionLanguageClosure = {
+            module.stageTranscriptionLanguage($0)
+        }
         validateClosure = { configuration, stages in
             try await module.validate(
                 configuration: configuration,
@@ -97,6 +152,14 @@ final class AnyProviderSettingsModule: ObservableObject, Identifiable {
 
     func discard() {
         discardClosure()
+    }
+
+    func refreshSystemState() {
+        refreshSystemStateClosure()
+    }
+
+    func stageTranscriptionLanguage(_ language: LanguageSelection) {
+        stageTranscriptionLanguageClosure(language)
     }
 
     func validate(

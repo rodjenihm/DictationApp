@@ -4,6 +4,7 @@ import AppKit
 // on MainActor. Remove @preconcurrency when the SDK annotates it safely.
 @preconcurrency import ApplicationServices
 import AVFoundation
+import Speech
 
 enum MicrophonePermissionStatus: Equatable {
     case notDetermined
@@ -17,9 +18,17 @@ enum AccessibilityPermissionStatus: Equatable {
     case notGranted
 }
 
+enum SpeechRecognitionPermissionStatus: Equatable {
+    case notDetermined
+    case granted
+    case denied
+    case restricted
+}
+
 enum PermissionSettingsPane {
     case microphone
     case accessibility
+    case speechRecognition
 }
 
 @MainActor
@@ -54,6 +63,50 @@ final class PermissionService: MicrophonePermissionServicing {
         return microphoneStatus()
     }
 
+    func speechRecognitionStatus()
+        -> SpeechRecognitionPermissionStatus
+    {
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .notDetermined:
+            .notDetermined
+        case .authorized:
+            .granted
+        case .denied:
+            .denied
+        case .restricted:
+            .restricted
+        @unknown default:
+            .restricted
+        }
+    }
+
+    func requestSpeechRecognitionAccess() async
+        -> SpeechRecognitionPermissionStatus
+    {
+        guard speechRecognitionStatus() == .notDetermined else {
+            return speechRecognitionStatus()
+        }
+
+        let status = await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization {
+                continuation.resume(returning: $0)
+            }
+        }
+
+        switch status {
+        case .notDetermined:
+            return .notDetermined
+        case .authorized:
+            return .granted
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        @unknown default:
+            return .restricted
+        }
+    }
+
     func accessibilityStatus() -> AccessibilityPermissionStatus {
         AXIsProcessTrusted() ? .granted : .notGranted
     }
@@ -79,6 +132,10 @@ final class PermissionService: MicrophonePermissionServicing {
             paneURLString =
                 "x-apple.systempreferences:com.apple.preference.security" +
                 "?Privacy_Accessibility"
+        case .speechRecognition:
+            paneURLString =
+                "x-apple.systempreferences:com.apple.preference.security" +
+                "?Privacy_SpeechRecognition"
         }
 
         if

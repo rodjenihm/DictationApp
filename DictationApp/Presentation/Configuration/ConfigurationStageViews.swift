@@ -14,7 +14,15 @@ struct ConfigurationTranscriptionView: View {
                 systemImage: "waveform"
             ) {
                 providerSelection
-                modelSelection
+                if
+                    viewModel.hasModelSelection(
+                        provider:
+                            viewModel.transcriptionProviderChoice,
+                        capability: .transcription
+                    )
+                {
+                    modelSelection
+                }
                 languageSelection
                 ConfigurationStageDisclosure(
                     viewModel: viewModel,
@@ -84,10 +92,7 @@ struct ConfigurationTranscriptionView: View {
                 selection: $viewModel.transcriptionModelChoice
             ) {
                 ForEach(
-                    viewModel.modelCatalog(
-                        for: viewModel.transcriptionProviderChoice,
-                        capability: .transcription
-                    )
+                    transcriptionModelCatalog
                 ) { model in
                     ConfigurationModelLabel(model: model)
                         .tag(model.id)
@@ -101,6 +106,15 @@ struct ConfigurationTranscriptionView: View {
                     Divider()
                     Text("Advanced: Custom model")
                         .tag(ConfigurationViewModel.customModelChoice)
+                }
+                if !hasTranscriptionModelPickerTag {
+                    Divider()
+                    Text(
+                        viewModel.transcriptionModelChoice.isEmpty
+                            ? "Choose a model"
+                            : "Provider-managed model"
+                    )
+                    .tag(viewModel.transcriptionModelChoice)
                 }
             }
             .labelsHidden()
@@ -135,8 +149,16 @@ struct ConfigurationTranscriptionView: View {
                     "Language",
                     selection: $viewModel.languageCode
                 ) {
-                    Text("Automatic").tag("")
-                    Divider()
+                    if
+                        viewModel
+                            .allowsAutomaticTranscriptionLanguage
+                    {
+                        Text("Automatic").tag("")
+                        Divider()
+                    } else if viewModel.languageCode.isEmpty {
+                        Text("Choose a language").tag("")
+                        Divider()
+                    }
                     ForEach(viewModel.availableLanguages) { language in
                         Text(language.displayName).tag(language.id)
                     }
@@ -166,6 +188,29 @@ struct ConfigurationTranscriptionView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var transcriptionModelCatalog:
+        [ProviderModelDescriptor]
+    {
+        viewModel.modelCatalog(
+            for: viewModel.transcriptionProviderChoice,
+            capability: .transcription
+        )
+    }
+
+    private var hasTranscriptionModelPickerTag: Bool {
+        transcriptionModelCatalog.contains {
+            $0.id == viewModel.transcriptionModelChoice
+        }
+            || (
+                viewModel.supportsCustomModels(
+                    provider: viewModel.transcriptionProviderChoice,
+                    capability: .transcription
+                )
+                    && viewModel.transcriptionModelChoice
+                        == ConfigurationViewModel.customModelChoice
+            )
     }
 
     private func routeIssueFocus() {

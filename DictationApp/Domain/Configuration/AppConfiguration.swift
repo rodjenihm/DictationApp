@@ -8,12 +8,15 @@ enum ProviderID:
     Identifiable,
     Sendable
 {
+    case appleOnDevice
     case openAI
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
+        case .appleOnDevice:
+            "Apple On-Device"
         case .openAI:
             "OpenAI"
         }
@@ -77,7 +80,8 @@ enum PostProcessingMode:
 
 struct AppConfiguration: Codable, Equatable, Sendable {
     var transcription: StageConfiguration
-    var language: LanguageSelection
+    var transcriptionLanguagesByProvider:
+        [ProviderID: LanguageSelection]
     var postProcessingMode: PostProcessingMode
     var postProcessing: StageConfiguration
 
@@ -85,10 +89,14 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         transcription: StageConfiguration(
             activeProvider: .openAI,
             modelsByProvider: [
+                .appleOnDevice:
+                    .curated("apple-speech-transcriber"),
                 .openAI: .curated("gpt-4o-transcribe"),
             ]
         ),
-        language: .automatic,
+        transcriptionLanguagesByProvider: [
+            .openAI: .automatic,
+        ],
         postProcessingMode: .disabled,
         postProcessing: StageConfiguration(
             activeProvider: .openAI,
@@ -100,12 +108,14 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 
     init(
         transcription: StageConfiguration,
-        language: LanguageSelection,
+        transcriptionLanguagesByProvider:
+            [ProviderID: LanguageSelection],
         postProcessingMode: PostProcessingMode,
         postProcessing: StageConfiguration
     ) {
         self.transcription = transcription
-        self.language = language
+        self.transcriptionLanguagesByProvider =
+            transcriptionLanguagesByProvider
         self.postProcessingMode = postProcessingMode
         self.postProcessing = postProcessing
     }
@@ -124,7 +134,9 @@ struct AppConfiguration: Codable, Equatable, Sendable {
                 transcriptionProvider: transcriptionModel,
             ]
         )
-        self.language = language
+        transcriptionLanguagesByProvider = [
+            transcriptionProvider: language,
+        ]
         self.postProcessingMode = postProcessingMode
         postProcessing = StageConfiguration(
             activeProvider: postProcessingProvider,
@@ -144,6 +156,27 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         set { transcription.setModel(newValue, for: transcriptionProvider) }
     }
 
+    var language: LanguageSelection {
+        get {
+            language(for: transcriptionProvider)
+        }
+        set {
+            setLanguage(newValue, for: transcriptionProvider)
+        }
+    }
+
+    func language(for provider: ProviderID) -> LanguageSelection {
+        transcriptionLanguagesByProvider[provider]
+            ?? (provider == .openAI ? .automatic : .explicit(""))
+    }
+
+    mutating func setLanguage(
+        _ language: LanguageSelection,
+        for provider: ProviderID
+    ) {
+        transcriptionLanguagesByProvider[provider] = language
+    }
+
     var postProcessingProvider: ProviderID {
         get { postProcessing.activeProvider }
         set { postProcessing.activeProvider = newValue }
@@ -156,6 +189,10 @@ struct AppConfiguration: Codable, Equatable, Sendable {
 
     var isStructurallyValid: Bool {
         !transcriptionModel.identifier.isEmpty
+            && (
+                transcriptionProvider != .appleOnDevice
+                    || language.providerIdentifier?.isEmpty == false
+            )
             && (
                 postProcessingMode == .disabled
                     || !postProcessingModel.identifier.isEmpty

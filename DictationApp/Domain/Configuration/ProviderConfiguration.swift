@@ -39,6 +39,7 @@ struct ProviderCapabilityDescriptor: Hashable, Sendable {
     let modelCatalog: [ProviderModelDescriptor]
     let defaultModelID: String?
     let languageSupport: ProviderLanguageSupport
+    let supportsAutomaticLanguage: Bool
     let acceptedAudioFileExtensions: Set<String>
 
     init(
@@ -49,6 +50,7 @@ struct ProviderCapabilityDescriptor: Hashable, Sendable {
         modelCatalog: [ProviderModelDescriptor] = [],
         defaultModelID: String? = nil,
         languageSupport: ProviderLanguageSupport = .notApplicable,
+        supportsAutomaticLanguage: Bool = false,
         acceptedAudioFileExtensions: Set<String> = []
     ) {
         self.capability = capability
@@ -58,6 +60,7 @@ struct ProviderCapabilityDescriptor: Hashable, Sendable {
         self.modelCatalog = modelCatalog
         self.defaultModelID = defaultModelID ?? modelCatalog.first?.id
         self.languageSupport = languageSupport
+        self.supportsAutomaticLanguage = supportsAutomaticLanguage
         self.acceptedAudioFileExtensions = acceptedAudioFileExtensions
     }
 }

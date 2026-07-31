@@ -51,6 +51,26 @@ struct ConfigurationGeneralView: View {
             )
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            Divider()
+
+            LabeledContent("Speech Recognition") {
+                HStack(spacing: 10) {
+                    ConfigurationPermissionStatusLabel(
+                        title: speechRecognitionStatusTitle,
+                        granted:
+                            viewModel.speechRecognitionStatus
+                                == .granted
+                    )
+                    speechRecognitionAction
+                }
+            }
+
+            Text(
+                "Speech Recognition is used only for Apple On-Device transcription. It is not requested when OpenAI is used."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -101,6 +121,36 @@ struct ConfigurationGeneralView: View {
             ) {
                 viewModel.openAccessibilitySettings()
             }
+        }
+    }
+
+    @ViewBuilder
+    private var speechRecognitionAction: some View {
+        switch viewModel.speechRecognitionStatus {
+        case .notDetermined:
+            AccessibleActionButton(
+                title: "Enable",
+                accessibilityLabel:
+                    "Enable Speech Recognition access",
+                accessibilityHelp:
+                    "Requests permission from macOS for Apple On-Device transcription."
+            ) {
+                Task {
+                    await viewModel.enableSpeechRecognition()
+                }
+            }
+        case .denied, .restricted:
+            AccessibleActionButton(
+                title: "Open System Settings",
+                accessibilityLabel:
+                    "Open Speech Recognition settings",
+                accessibilityHelp:
+                    "Opens the macOS Speech Recognition privacy settings."
+            ) {
+                viewModel.openSpeechRecognitionSettings()
+            }
+        case .granted:
+            EmptyView()
         }
     }
 
@@ -217,5 +267,18 @@ struct ConfigurationGeneralView: View {
         viewModel.accessibilityStatus == .granted
             ? "Enabled"
             : "Not enabled"
+    }
+
+    private var speechRecognitionStatusTitle: String {
+        switch viewModel.speechRecognitionStatus {
+        case .notDetermined:
+            "Not requested"
+        case .granted:
+            "Enabled"
+        case .denied:
+            "Denied"
+        case .restricted:
+            "Restricted"
+        }
     }
 }

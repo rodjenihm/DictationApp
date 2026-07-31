@@ -25,6 +25,7 @@ final class AppModel: ObservableObject {
         ProviderRuntimeHealthStore()
     private var hasStarted = false
     private var sessionStateCancellable: AnyCancellable?
+    private var providerSettingsCancellables: [AnyCancellable] = []
 
     private lazy var audioRecorder = AVFoundationAudioRecorder(
         fileStore: recordingFileStore
@@ -33,6 +34,13 @@ final class AppModel: ObservableObject {
     private lazy var transcriptionProvider = OpenAITranscriptionProvider(
         credentialStore: credentialStore
     )
+
+    private lazy var appleSpeechService = AppleSpeechService()
+
+    private lazy var appleTranscriptionProvider =
+        AppleOnDeviceTranscriptionProvider(
+            speechService: appleSpeechService
+        )
 
     private lazy var postProcessingProvider =
         OpenAIPostProcessingProvider(
@@ -46,8 +54,23 @@ final class AppModel: ObservableObject {
             runtimeHealth: providerRuntimeHealth
         )
 
+    private lazy var appleSettingsModule =
+        AppleOnDeviceProviderSettingsModule(
+            speechService: appleSpeechService,
+            permissionService: permissionService,
+            settingsStore: settingsStore
+        )
+
     private lazy var providerRegistry = ProviderRegistry(
         registrations: [
+            ProviderRegistry.Registration(
+                settings: AnyProviderSettingsModule(
+                    appleSettingsModule
+                ),
+                transcriptionProvider:
+                    appleTranscriptionProvider,
+                postProcessingProvider: nil
+            ),
             ProviderRegistry.Registration(
                 settings: AnyProviderSettingsModule(
                     openAISettingsModule
@@ -137,6 +160,12 @@ final class AppModel: ObservableObject {
             [weak self] state in
             self?.apply(state)
         }
+        providerSettingsCancellables =
+            providerRegistry.settingsModules.map { module in
+                module.objectWillChange.sink { [weak self] _ in
+                    self?.refreshStatus()
+                }
+            }
         shortcutService.onShortcutPressed = { [weak self] in
             self?.performPrimaryAction()
         }
@@ -318,7 +347,7 @@ final class AppModel: ObservableObject {
         dictationCoordinator.start(
             configuration: SessionConfiguration(
                 configuration: configuration,
-                recordingProfile: .openAI
+                recordingProfile: .completedM4A
             ),
             soundCuesEnabled: storedSettings.soundCuesEnabled
         )
@@ -433,7 +462,9 @@ final class AppModel: ObservableObject {
             )
         case .transcribing(let provider):
             statusText =
-                "Uploading completed audio to \(provider.displayName)…"
+                provider == .appleOnDevice
+                ? "Transcribing on this Mac…"
+                : "Uploading completed audio to \(provider.displayName)…"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
             canCancel = true

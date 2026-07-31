@@ -54,6 +54,7 @@ final class OpenAIProviderSettingsModule:
                             )
                         }
                     ),
+                    supportsAutomaticLanguage: true,
                     acceptedAudioFileExtensions: ["m4a"]
                 ),
                 .postProcessing: ProviderCapabilityDescriptor(

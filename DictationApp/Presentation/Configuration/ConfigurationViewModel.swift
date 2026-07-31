@@ -114,7 +114,26 @@ final class ConfigurationViewModel {
         AppConfiguration.default.transcriptionProvider
     var transcriptionModelChoice = ""
     var transcriptionCustomModel = ""
-    var languageCode = ""
+    var languageCode = "" {
+        didSet {
+            guard
+                presentationMode == .full,
+                languageCode != oldValue
+            else {
+                return
+            }
+            let language: LanguageSelection =
+                languageCode.isEmpty
+                ? .automatic
+                : .explicit(languageCode)
+            transcriptionLanguagesByProvider[
+                transcriptionProviderChoice
+            ] = language
+            providerRegistry.settingsModule(
+                for: transcriptionProviderChoice
+            )?.stageTranscriptionLanguage(language)
+        }
+    }
     var postProcessingEnabled = false
     var postProcessingProviderChoice =
         AppConfiguration.default.postProcessingProvider
@@ -128,6 +147,8 @@ final class ConfigurationViewModel {
         MicrophonePermissionStatus = .notDetermined
     private(set) var accessibilityStatus:
         AccessibilityPermissionStatus = .notGranted
+    private(set) var speechRecognitionStatus:
+        SpeechRecognitionPermissionStatus = .notDetermined
     private(set) var shortcutErrorMessage: String?
     private(set) var successMessage: String?
     private(set) var issues: [ConfigurationIssue] = []
@@ -165,6 +186,8 @@ final class ConfigurationViewModel {
     private var savedSoundCuesEnabled = true
     private var transcriptionModelsByProvider:
         [ProviderID: ModelSelection] = [:]
+    private var transcriptionLanguagesByProvider:
+        [ProviderID: LanguageSelection] = [:]
     private var postProcessingModelsByProvider:
         [ProviderID: ModelSelection] = [:]
     private var postProcessingHealthRevision = 0
@@ -206,11 +229,62 @@ final class ConfigurationViewModel {
         providerCancellables =
             providerRegistry.settingsModules.map { module in
                 module.objectWillChange.sink { [weak self] _ in
-                    self?.issues.removeAll {
+                    guard let self else {
+                        return
+                    }
+                    self.issues.removeAll {
                         $0.provider == module.id
                             && $0.destination == .providers
                     }
-                    self?.providerSettingsRevision &+= 1
+                    if
+                        let language =
+                            module.provisionalTranscriptionLanguage
+                    {
+                        if
+                            self.transcriptionLanguagesByProvider[
+                                module.id
+                            ] != language
+                        {
+                            self.transcriptionLanguagesByProvider[
+                                module.id
+                            ] = language
+                        }
+                        if
+                            self.transcriptionProviderChoice
+                                == module.id,
+                            self.languageCode
+                                != (
+                                    language.providerIdentifier
+                                    ?? ""
+                                )
+                        {
+                            self.languageCode =
+                                language.providerIdentifier ?? ""
+                        }
+                    }
+                    if
+                        self.isFirstRun,
+                        module.id == .appleOnDevice,
+                        module.hasResolvedFirstRunEligibility,
+                        !module.isEligibleForFirstRunDefault,
+                        self.selectedProviderDetail
+                            == .appleOnDevice
+                    {
+                        self.selectTranscriptionProvider(.openAI)
+                        self.selectedProviderDetail = .openAI
+                    }
+                    if
+                        self.isFirstRun,
+                        self.selectedProviderDetail
+                            == .appleOnDevice,
+                        module.id == .appleOnDevice,
+                        module.hasProvisionalConfiguration
+                    {
+                        self.selectTranscriptionProvider(
+                            .appleOnDevice
+                        )
+                    }
+                    self.providerSettingsRevision &+= 1
                 }
             }
         reload()
@@ -340,6 +414,26 @@ final class ConfigurationViewModel {
             .capabilities[capability]?.supportsCustomModels ?? false
     }
 
+    func hasModelSelection(
+        provider: ProviderID,
+        capability: ProviderCapability
+    ) -> Bool {
+        !modelCatalog(
+            for: provider,
+            capability: capability
+        ).isEmpty
+            || supportsCustomModels(
+                provider: provider,
+                capability: capability
+            )
+    }
+
+    var allowsAutomaticTranscriptionLanguage: Bool {
+        descriptor(for: transcriptionProviderChoice)?
+            .capabilities[.transcription]?
+            .supportsAutomaticLanguage ?? false
+    }
+
     var postProcessingAttentionMessage: String? {
         _ = postProcessingHealthRevision
         guard savedConfiguration.postProcessingMode == .enabled else {
@@ -386,7 +480,9 @@ final class ConfigurationViewModel {
                 return true
             }
             return draft.transcription != savedConfiguration.transcription
-                || draft.language != savedConfiguration.language
+                || draft.transcriptionLanguagesByProvider
+                    != savedConfiguration
+                        .transcriptionLanguagesByProvider
         case .postProcessing:
             guard let draft = draftConfiguration() else {
                 return true
@@ -498,6 +594,11 @@ final class ConfigurationViewModel {
     func refreshSystemState() {
         microphoneStatus = permissionService.microphoneStatus()
         accessibilityStatus = permissionService.accessibilityStatus()
+        speechRecognitionStatus =
+            permissionService.speechRecognitionStatus()
+        providerRegistry.settingsModules.forEach {
+            $0.refreshSystemState()
+        }
     }
 
     func enableMicrophone() async {
@@ -516,12 +617,30 @@ final class ConfigurationViewModel {
             permissionService.requestAccessibilityAccess()
     }
 
+    func enableSpeechRecognition() async {
+        guard canEditPresentedSettings else {
+            return
+        }
+        speechRecognitionStatus =
+            await permissionService
+                .requestSpeechRecognitionAccess()
+        providerRegistry.settingsModule(
+            for: .appleOnDevice
+        )?.refreshSystemState()
+    }
+
     func openMicrophoneSettings() {
         permissionService.openSystemSettings(for: .microphone)
     }
 
     func openAccessibilitySettings() {
         permissionService.openSystemSettings(for: .accessibility)
+    }
+
+    func openSpeechRecognitionSettings() {
+        permissionService.openSystemSettings(
+            for: .speechRecognition
+        )
     }
 
     func updateGlobalShortcut(_ candidate: GlobalShortcut) {
@@ -555,11 +674,19 @@ final class ConfigurationViewModel {
 
     func selectTranscriptionProvider(_ provider: ProviderID) {
         stashCurrentTranscriptionModel()
+        stashCurrentTranscriptionLanguage()
         transcriptionProviderChoice = provider
         let model =
             transcriptionModelsByProvider[provider]
             ?? defaultModel(for: provider, capability: .transcription)
         applyTranscriptionModel(model)
+        let language =
+            transcriptionLanguagesByProvider[provider]
+            ?? providerRegistry.settingsModule(for: provider)?
+                .provisionalTranscriptionLanguage
+            ?? (provider == .openAI ? .automatic : .explicit(""))
+        transcriptionLanguagesByProvider[provider] = language
+        languageCode = language.providerIdentifier ?? ""
     }
 
     func selectPostProcessingProvider(_ provider: ProviderID) {
@@ -578,6 +705,12 @@ final class ConfigurationViewModel {
 
     func showProvidersList() {
         selectedProviderDetail = nil
+    }
+
+    func useOpenAIForTranscription() {
+        selectTranscriptionProvider(.openAI)
+        selectedDestination = .providers
+        selectedProviderDetail = .openAI
     }
 
     func cancelValidation() {
@@ -683,6 +816,8 @@ final class ConfigurationViewModel {
             savedConfiguration = configuration
             transcriptionModelsByProvider =
                 configuration.transcription.modelsByProvider
+            transcriptionLanguagesByProvider =
+                configuration.transcriptionLanguagesByProvider
             postProcessingModelsByProvider =
                 configuration.postProcessing.modelsByProvider
             savedShortcut = globalShortcut
@@ -745,9 +880,14 @@ final class ConfigurationViewModel {
             configuration.transcriptionModel,
             for: configuration.transcriptionProvider
         )
+        repaired.setLanguage(
+            configuration.language,
+            for: configuration.transcriptionProvider
+        )
         let repair = TranscriptionRepair(
             provider: repaired.transcriptionProvider,
-            model: repaired.transcriptionModel
+            model: repaired.transcriptionModel,
+            language: repaired.language
         )
 
         try settingsStore.commit(
@@ -762,6 +902,9 @@ final class ConfigurationViewModel {
         transcriptionModelsByProvider[
             repaired.transcriptionProvider
         ] = repaired.transcriptionModel
+        transcriptionLanguagesByProvider[
+            repaired.transcriptionProvider
+        ] = repaired.language
         providerRuntimeHealth.clearAfterValidation(
             provider: repaired.transcriptionProvider,
             capability: .transcription,
@@ -799,6 +942,8 @@ final class ConfigurationViewModel {
         let transcriptionChanged =
             configuration.transcriptionProvider
                 != savedConfiguration.transcriptionProvider
+                || configuration.language
+                    != savedConfiguration.language
                 || (
                     configuration.transcriptionModel.isCustom
                         && configuration.transcriptionModel
@@ -864,6 +1009,21 @@ final class ConfigurationViewModel {
                     provider: nil,
                     field: .transcriptionModel,
                     message: "Enter a transcription model identifier."
+                )
+            )
+        }
+
+        if
+            configuration.transcriptionProvider == .appleOnDevice,
+            languageCode.isEmpty
+        {
+            replaceIssue(
+                ConfigurationIssue(
+                    destination: .transcription,
+                    provider: .appleOnDevice,
+                    field: .language,
+                    message:
+                        "Choose a language for Apple On-Device transcription."
                 )
             )
         }
@@ -964,14 +1124,21 @@ final class ConfigurationViewModel {
                 : .curated(resolvedTranscriptionModel),
             for: transcriptionProviderChoice
         )
-        configuration.language =
+        configuration.transcriptionLanguagesByProvider =
+            transcriptionLanguagesByProvider
+        configuration.setLanguage(
             presentationMode == .transcriptionRepair
-            ? repairContext?.language ?? savedConfiguration.language
-            : (
-                languageCode.isEmpty
-                ? .automatic
-                : .explicit(languageCode)
-            )
+                ? repairLanguage(
+                    for: transcriptionProviderChoice
+                )
+                    ?? savedConfiguration.language
+                : (
+                    languageCode.isEmpty
+                    ? .automatic
+                    : .explicit(languageCode)
+                ),
+            for: transcriptionProviderChoice
+        )
         configuration.postProcessingMode =
             postProcessingEnabled ? .enabled : .disabled
         configuration.postProcessing.modelsByProvider =
@@ -1027,6 +1194,8 @@ final class ConfigurationViewModel {
     private func apply(_ configuration: AppConfiguration) {
         transcriptionModelsByProvider =
             configuration.transcription.modelsByProvider
+        transcriptionLanguagesByProvider =
+            configuration.transcriptionLanguagesByProvider
         postProcessingModelsByProvider =
             configuration.postProcessing.modelsByProvider
         transcriptionProviderChoice =
@@ -1068,6 +1237,15 @@ final class ConfigurationViewModel {
             transcriptionModelChoice == Self.customModelChoice
             ? .custom(resolvedTranscriptionModel)
             : .curated(resolvedTranscriptionModel)
+    }
+
+    private func stashCurrentTranscriptionLanguage() {
+        transcriptionLanguagesByProvider[
+            transcriptionProviderChoice
+        ] =
+            languageCode.isEmpty
+            ? .automatic
+            : .explicit(languageCode)
     }
 
     private func stashCurrentPostProcessingModel() {
@@ -1140,14 +1318,54 @@ final class ConfigurationViewModel {
         }
 
         guard case .explicit(let language) = context.language else {
-            return true
+            return descriptor.supportsAutomaticLanguage
         }
         switch descriptor.languageSupport {
         case .notApplicable, .automaticOnly:
             return false
         case .catalog(let languages):
-            return languages.contains { $0.id == language }
+            return languages.contains {
+                localeLanguageCode($0.id)
+                    == localeLanguageCode(language)
+            }
         }
+    }
+
+    private func repairLanguage(
+        for provider: ProviderID
+    ) -> LanguageSelection? {
+        guard let original = repairContext?.language else {
+            return nil
+        }
+        guard case .explicit(let identifier) = original else {
+            return original
+        }
+        guard
+            let capability =
+                descriptor(for: provider)?
+                    .capabilities[.transcription],
+            case .catalog(let languages) =
+                capability.languageSupport
+        else {
+            return original
+        }
+        let sourceCode = localeLanguageCode(identifier)
+        guard
+            let equivalent = languages.first(
+                where: {
+                    localeLanguageCode($0.id) == sourceCode
+                }
+            )
+        else {
+            return original
+        }
+        return .explicit(equivalent.id)
+    }
+
+    private func localeLanguageCode(_ identifier: String)
+        -> Locale.LanguageCode?
+    {
+        Locale(identifier: identifier).language.languageCode
     }
 
     private func isUsable(_ readiness: ProviderReadiness) -> Bool {
