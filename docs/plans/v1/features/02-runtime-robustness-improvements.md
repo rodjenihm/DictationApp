@@ -2,7 +2,7 @@
 
 **Status:** Complete
 
-**Specification:** `docs/specifications/v1/features/runtime-robustness-improvements.md`
+**Specification:** `docs/specifications/v1/features/02-runtime-robustness-improvements.md`
 
 ## Progress
 

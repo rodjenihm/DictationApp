@@ -5,7 +5,7 @@
 ## Source specification
 
 Implement
-`docs/specifications/v1/features/apple-on-device-transcription.md`.
+`docs/specifications/v1/features/03-apple-on-device-transcription.md`.
 
 This plan adds Apple On-Device incrementally while preserving the macOS 15
 deployment target, the existing completed-file coordinator, and transactional

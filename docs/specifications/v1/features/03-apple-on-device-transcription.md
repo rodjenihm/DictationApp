@@ -16,7 +16,7 @@ OpenAI as an automatic fallback from Apple On-Device.
 This specification extends
 `docs/specifications/v1/application.md` and supersedes the OpenAI-only and
 global-language assumptions in
-`docs/specifications/v1/features/tabbed-settings.md`.
+`docs/specifications/v1/features/01-tabbed-settings.md`.
 
 ## Product motivation
 

@@ -11,7 +11,7 @@ application's user-facing workflow.
 This specification refines the lifecycle and cancellation requirements in
 `docs/specifications/v1/application.md`. It also preserves the transactional
 Settings behavior defined by
-`docs/specifications/v1/features/tabbed-settings.md`.
+`docs/specifications/v1/features/01-tabbed-settings.md`.
 
 The work is intentionally incremental. Each section can be implemented and
 reviewed independently, and no section requires a broad rewrite of the

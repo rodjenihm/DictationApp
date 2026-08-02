@@ -2,7 +2,7 @@
 
 **Status:** Complete
 
-**Specification:** `docs/specifications/v1/features/tabbed-settings.md`
+**Specification:** `docs/specifications/v1/features/01-tabbed-settings.md`
 
 ## Progress
 

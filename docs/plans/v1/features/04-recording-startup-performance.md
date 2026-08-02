@@ -2,7 +2,7 @@
 
 **Status:** Complete
 
-**Specification:** `docs/specifications/v1/features/recording-startup-performance.md`
+**Specification:** `docs/specifications/v1/features/04-recording-startup-performance.md`
 
 ## Progress
 
