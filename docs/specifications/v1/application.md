@@ -195,6 +195,9 @@ Do not include GPT-4-family models in the initial curated post-processing catalo
 
 When enabled, post-processing runs for every transcript. Do not add another model to decide whether cleanup is worthwhile.
 
+OpenAI post-processing and its lightweight validation request use `minimal`
+reasoning effort to reduce latency and reasoning-token cost.
+
 The initial version provides one built-in cleanup behavior. Users may enable or disable it and choose its provider and model, but cannot customize the cleanup instructions.
 
 Do not add cleanup intensity controls, custom prompts, tone or writing-style presets, or per-application cleanup profiles to the initial version.

@@ -171,6 +171,7 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
             model: model,
             instructions: Self.cleanupInstructions,
             input: serializedTranscript,
+            reasoning: .init(effort: "minimal"),
             maxOutputTokens: maximumOutputTokens,
             tools: [],
             store: false
@@ -398,9 +399,14 @@ private struct RawTranscriptInput: Encodable {
 }
 
 private struct ResponsesRequest: Encodable {
+    struct Reasoning: Encodable {
+        let effort: String
+    }
+
     let model: String
     let instructions: String
     let input: String
+    let reasoning: Reasoning
     let maxOutputTokens: Int
     let tools: [ResponsesTool]
     let store: Bool
@@ -409,6 +415,7 @@ private struct ResponsesRequest: Encodable {
         case model
         case instructions
         case input
+        case reasoning
         case maxOutputTokens = "max_output_tokens"
         case tools
         case store

@@ -251,6 +251,7 @@ Implemented:
 - Added provider-neutral post-processing configuration, request, and provider contracts.
 - Added a centralized output policy that trims only external whitespace, preserves internal paragraphs, bounds visible output length, derives a 64–4096 Responses token budget, and rejects empty or structurally implausible cleanup output.
 - Added an OpenAI Responses adapter with per-operation Keychain resolution, immutable cleanup instructions, JSON-serialized untrusted transcript input, explicit empty tools, `store:false`, a sixty-second timeout, curated/custom model mapping, ordered completed-response `output_text` extraction, and the shared three-attempt retry/failure policy.
+- Set `reasoning.effort` to `minimal` for OpenAI post-processing and its lightweight validation request to reduce latency and reasoning-token cost.
 - Extended the immutable-session coordinator pipeline to delete audio after successful transcription, bypass cleanup when disabled, publish cancellable cleanup progress when enabled, copy validated cleanup output, and use a 2.5-second cue-free raw-transcript fallback for every cleanup failure.
 - Preserved session-generation checks across provider completion, output validation, clipboard writes, cancellation, and fallback acknowledgements.
 - Added non-persisted provider/model health tracking so known configuration failures skip matching future requests, while successful enabled-cleanup credential/model validation clears attention and unrelated Settings saves do not.
@@ -259,6 +260,7 @@ Implemented:
 Verified:
 
 - Final signed Debug and Release builds succeeded for arm64 with a macOS 15.0 minimum and Hardened Runtime.
+- Follow-up signed Debug and Release builds succeeded after adding minimal reasoning effort to both OpenAI Responses payloads.
 - Final Debug and Release signatures contain `com.apple.security.device.audio-input`; neither contains the App Sandbox entitlement.
 - A temporary loopback provider harness verified the direct `/v1/responses` request shape, authorization presence, immutable instructions, JSON data input, `store:false`, empty tools, curated model mapping, character/token bounds, ordered completed-response output extraction, three-attempt transient retry, configuration non-retry, and structural output rejection.
 - A temporary coordinator harness verified disabled bypass, cleaned clipboard success, invalid-output and provider raw fallback, the 2.5-second fallback state, no fallback failure cue, audio deletion before cleanup, known-bad configuration skipping, validation-based health clearing, and cancellation guards against late clipboard writes.

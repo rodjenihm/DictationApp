@@ -133,6 +133,7 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
             instructions:
                 "Return only the word OK. Do not add punctuation or explanation.",
             input: "Configuration validation",
+            reasoning: .init(effort: "minimal"),
             maxOutputTokens: 128,
             store: false
         )
@@ -230,9 +231,14 @@ private struct TranscriptionValidationResponse: Decodable {
 }
 
 private struct ResponsesValidationRequest: Encodable {
+    struct Reasoning: Encodable {
+        let effort: String
+    }
+
     let model: String
     let instructions: String
     let input: String
+    let reasoning: Reasoning
     let maxOutputTokens: Int
     let store: Bool
 
@@ -240,6 +246,7 @@ private struct ResponsesValidationRequest: Encodable {
         case model
         case instructions
         case input
+        case reasoning
         case maxOutputTokens = "max_output_tokens"
         case store
     }
