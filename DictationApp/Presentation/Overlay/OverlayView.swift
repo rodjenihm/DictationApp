@@ -158,7 +158,7 @@ struct OverlayView: View {
     private var title: String {
         switch state {
         case .preparing:
-            "Preparing recording…"
+            "Activating microphone…"
         case .recording(let elapsed, _, _):
             "Recording \(formatDuration(elapsed))"
         case .finalizing(let reason):

@@ -18,15 +18,28 @@ enum SoundCue: CaseIterable {
             NSSound.Name("Basso")
         }
     }
+
+    var maximumPlaybackDuration: Duration? {
+        switch self {
+        case .recordingStarted:
+            .milliseconds(120)
+        case
+            .recordingStopped,
+            .sessionCancelled,
+            .attentionRequired:
+            nil
+        }
+    }
 }
 
 @MainActor
 final class SoundCuePlayer {
     private var activePlaybacks: [ObjectIdentifier: SoundPlayback] = [:]
-    private var playbackTail:
-        (identifier: UUID, task: Task<Void, Never>)?
 
     func play(_ cue: SoundCue, enabled: Bool) async {
+        if case .recordingStarted = cue {
+            stopAll()
+        }
         await enqueue(cue, enabled: enabled).value
     }
 
@@ -42,23 +55,19 @@ final class SoundCuePlayer {
             return Task {}
         }
 
-        let identifier = UUID()
-        let previousTask = playbackTail?.task
         let task = Task { @MainActor [weak self] in
-            await previousTask?.value
-            await self?.playImmediately(cue)
-        }
-        playbackTail = (identifier, task)
-
-        Task { @MainActor [weak self] in
-            await task.value
-            guard self?.playbackTail?.identifier == identifier else {
+            guard let self else {
                 return
             }
-            self?.playbackTail = nil
+            await playImmediately(cue)
         }
-
         return task
+    }
+
+    private func stopAll() {
+        let playbacks = Array(activePlaybacks.values)
+        activePlaybacks.removeAll()
+        playbacks.forEach { $0.stop() }
     }
 
     private func playImmediately(_ cue: SoundCue) async {
@@ -75,7 +84,9 @@ final class SoundCuePlayer {
             }
             activePlaybacks[playback.identifier] = playback
 
-            if !playback.play() {
+            if !playback.play(
+                maximumDuration: cue.maximumPlaybackDuration
+            ) {
                 activePlaybacks[playback.identifier] = nil
                 continuation.resume()
             }
@@ -89,6 +100,7 @@ private final class SoundPlayback: NSObject, NSSoundDelegate {
 
     private let sound: NSSound
     private var completion: ((ObjectIdentifier) -> Void)?
+    private var stopTask: Task<Void, Never>?
 
     init(
         sound: NSSound,
@@ -101,8 +113,26 @@ private final class SoundPlayback: NSObject, NSSoundDelegate {
         sound.delegate = self
     }
 
-    func play() -> Bool {
-        sound.play()
+    func play(maximumDuration: Duration?) -> Bool {
+        guard sound.play() else {
+            return false
+        }
+
+        if let maximumDuration {
+            stopTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: maximumDuration)
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.stop()
+            }
+        }
+        return true
+    }
+
+    func stop() {
+        sound.stop()
+        finish()
     }
 
     func sound(
@@ -113,6 +143,8 @@ private final class SoundPlayback: NSObject, NSSoundDelegate {
     }
 
     private func finish() {
+        stopTask?.cancel()
+        stopTask = nil
         let completion = completion
         self.completion = nil
         completion?(identifier)

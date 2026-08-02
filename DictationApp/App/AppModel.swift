@@ -27,7 +27,7 @@ final class AppModel: ObservableObject {
     private var sessionStateCancellable: AnyCancellable?
     private var providerSettingsCancellables: [AnyCancellable] = []
 
-    private lazy var audioRecorder = AVFoundationAudioRecorder(
+    private lazy var audioRecorder = AVAudioEngineRecorder(
         fileStore: recordingFileStore
     )
 
@@ -417,7 +417,7 @@ final class AppModel: ObservableObject {
             overlayWindowController.dismiss()
             refreshStatus(force: true)
         case .preparing:
-            statusText = "Preparing recording…"
+            statusText = "Activating microphone…"
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = false
             canCancel = true

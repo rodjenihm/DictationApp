@@ -29,6 +29,7 @@ final class DictationCoordinator: ObservableObject {
     private var activeTextPayload: SessionTextPayload?
     private var pendingCancellationCue:
         (sessionIdentifier: UUID, enabled: Bool)?
+    private var preparationStartedAt: TimeInterval?
 
     init(
         recorder: any AudioRecorder,
@@ -150,6 +151,7 @@ final class DictationCoordinator: ObservableObject {
         failedSessionContext = nil
         activeClipboardTransaction = nil
         activeTextPayload = SessionTextPayload()
+        preparationStartedAt = ProcessInfo.processInfo.systemUptime
 
         guard transition(to: .preparing(configuration), token: token)
         else {
@@ -256,15 +258,13 @@ final class DictationCoordinator: ObservableObject {
             try await ensureMicrophonePermission()
             try requireCurrent(token)
 
+            soundCuePlayer.enqueue(
+                .recordingStarted,
+                enabled: soundCuesEnabled
+            )
             let prepared = try await recorder.prepare(
                 profile: configuration.recordingProfile,
                 sessionIdentifier: token.id
-            )
-            try requireCurrent(token)
-
-            await soundCuePlayer.play(
-                .recordingStarted,
-                enabled: soundCuesEnabled
             )
             try requireCurrent(token)
 
@@ -284,6 +284,17 @@ final class DictationCoordinator: ObservableObject {
                 token: token
             ) else {
                 throw CancellationError()
+            }
+            if let preparationStartedAt {
+                let elapsedMilliseconds = Int(
+                    (
+                        ProcessInfo.processInfo.systemUptime
+                            - preparationStartedAt
+                    ) * 1_000
+                )
+                AppLog.capture.info(
+                    "Accepted start reached recording in \(elapsedMilliseconds, privacy: .public) ms"
+                )
             }
 
             let recordingEvent = try await waitForRecordingEvent(
@@ -459,7 +470,7 @@ final class DictationCoordinator: ObservableObject {
         try Task.checkCancellation()
         ownedArtifactURL = artifact.url
 
-        await soundCuePlayer.play(
+        soundCuePlayer.enqueue(
             .recordingStopped,
             enabled: activeSession.soundCuesEnabled
         )
@@ -1205,6 +1216,7 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
+        preparationStartedAt = nil
 
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
@@ -1229,6 +1241,7 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
+        preparationStartedAt = nil
 
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
@@ -1267,6 +1280,7 @@ final class DictationCoordinator: ObservableObject {
 
         activeTextPayload?.clear()
         activeTextPayload = nil
+        preparationStartedAt = nil
         failedSessionContext = nil
         let restoredClipboard =
             activeClipboardTransaction?.cancelAndRestoreIfOwned()
@@ -1325,6 +1339,7 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
+        preparationStartedAt = nil
         ownedArtifactURL = nil
         state = .idle
     }
