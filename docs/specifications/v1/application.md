@@ -413,10 +413,13 @@ Recording duration behavior:
 
 Input-device behavior:
 
-- Resolve and use the current macOS default audio input at the start of every recording.
-- Do not provide an application-specific microphone picker in the initial version.
+> Superseded by `features/05-microphone-selection.md` for microphone
+> discovery, preference, fallback, and per-session capture ownership.
+
+- Resolve the saved microphone preference at the start of every recording.
+- Provide System Default and specific-device choices in General Settings.
 - Display the active input device name in the recording overlay.
-- Resolve the default again for each new session so changes made in macOS Sound settings take effect.
+- Keep the saved preference independent from the macOS system default.
 - If no input device is available before capture starts, show an actionable capture error and return to idle.
 - If the input device becomes unavailable or capture fails while recording, stop capture and attempt to finalize the partial M4A.
 - If the partial file is valid and at least 500 milliseconds long, offer Transcribe Partial and Discard. Do not upload it automatically.

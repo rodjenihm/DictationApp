@@ -10,6 +10,7 @@ This project is developed through a specification-driven, AI-assisted engineerin
 
 - Full native Settings window with General, Transcription, Post-processing, and Providers destinations
 - Global keyboard shortcut with transactional Save and rollback behavior
+- Preferred microphone selection with automatic System Default fallback
 - Native, non-activating recording overlay
 - Provider and model selection for transcription
 - Provider-neutral automatic or explicit language selection

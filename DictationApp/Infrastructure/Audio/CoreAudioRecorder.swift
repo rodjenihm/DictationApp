@@ -4,31 +4,39 @@ import Foundation
 import OSLog
 
 @MainActor
-final class AVAudioEngineRecorder: AudioRecorder {
+final class CoreAudioRecorder: AudioRecorder {
     var onUnexpectedCaptureFailure:
         ((UUID, UnexpectedCaptureOutcome) -> Void)?
     var onCancellationTeardownCompleted:
         ((UUID) -> Void)?
 
     private let fileStore: RecordingFileStore
-    private let runtime = AudioEngineRuntime()
+    private let audioInputDeviceService:
+        CoreAudioInputDeviceService
+    private let runtime = AudioUnitRuntime()
 
-    private var context: AudioEngineCaptureContext?
+    private var context: CoreAudioCaptureContext?
     private var startContinuation:
         CheckedContinuation<Void, any Error>?
+    private var startTimeoutTask: Task<Void, Never>?
     private var preparingSessionIdentifiers: Set<UUID> = []
     private var cancelledSessionIdentifiers: Set<UUID> = []
     private var isExpectedFinish = false
     private var hasAcceptedAudio = false
     private var engineStartBeganAt: TimeInterval?
-    private var terminationContext: AudioEngineCaptureContext?
+    private var terminationContext: CoreAudioCaptureContext?
 
-    init(fileStore: RecordingFileStore) {
+    init(
+        fileStore: RecordingFileStore,
+        audioInputDeviceService: CoreAudioInputDeviceService
+    ) {
         self.fileStore = fileStore
+        self.audioInputDeviceService = audioInputDeviceService
     }
 
     func prepare(
         profile: RecordingProfile,
+        audioInputPreference: AudioInputPreference,
         sessionIdentifier: UUID
     ) async throws -> PreparedRecording {
         let preparationBeganAt = ProcessInfo.processInfo.systemUptime
@@ -51,6 +59,13 @@ final class AVAudioEngineRecorder: AudioRecorder {
             preparingSessionIdentifiers.remove(sessionIdentifier)
         }
 
+        let candidates = audioInputDeviceService.captureCandidates(
+            for: audioInputPreference
+        )
+        guard !candidates.isEmpty else {
+            throw AudioRecorderError.noInputDevice
+        }
+
         let outputURL: URL
         do {
             outputURL = try fileStore.makeRecordingURL(
@@ -60,18 +75,35 @@ final class AVAudioEngineRecorder: AudioRecorder {
             throw AudioRecorderError.cannotConfigure
         }
 
-        guard let device = AVCaptureDevice.default(for: .audio) else {
-            fileStore.delete(outputURL)
-            throw AudioRecorderError.noInputDevice
-        }
-
         do {
-            let preparedContext = try await configureCapture(
-                profile: profile,
-                outputURL: outputURL,
-                device: device,
-                sessionIdentifier: sessionIdentifier
-            )
+            var preparedContext: CoreAudioCaptureContext?
+            var lastError: (any Error)?
+
+            for candidate in candidates {
+                do {
+                    preparedContext = try await configureCapture(
+                        profile: profile,
+                        outputURL: outputURL,
+                        candidate: candidate,
+                        sessionIdentifier: sessionIdentifier
+                    )
+                    break
+                } catch {
+                    lastError = error
+                    fileStore.delete(outputURL)
+                    if !candidate.isFallback,
+                        candidates.contains(where: \.isFallback)
+                    {
+                        AppLog.capture.notice(
+                            "Preferred audio input preparation failed; trying system default"
+                        )
+                    }
+                }
+            }
+
+            guard let preparedContext else {
+                throw lastError ?? AudioRecorderError.cannotConfigure
+            }
 
             guard
                 cancelledSessionIdentifiers.remove(
@@ -102,7 +134,8 @@ final class AVAudioEngineRecorder: AudioRecorder {
                 "Streaming capture preparation succeeded in \(elapsedMilliseconds, privacy: .public) ms"
             )
             return PreparedRecording(
-                inputDeviceName: device.localizedName
+                inputDeviceName: preparedContext.inputDeviceName,
+                isUsingFallback: preparedContext.isUsingFallback
             )
         } catch {
             let wasCancelled =
@@ -123,18 +156,34 @@ final class AVAudioEngineRecorder: AudioRecorder {
         }
 
         engineStartBeganAt = ProcessInfo.processInfo.systemUptime
+        startTimeoutTask?.cancel()
+        startTimeoutTask = Task {
+            @concurrent [weak self, sessionIdentifier =
+                context.sessionIdentifier] in
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else {
+                return
+            }
+            await self?.handleAudioUnitStartFailure(
+                sessionIdentifier: sessionIdentifier
+            )
+        }
+
         return try await withCheckedThrowingContinuation { continuation in
             startContinuation = continuation
 
             runtime.queue.async { [weak self, context] in
-                do {
-                    try context.runtime.engine.start()
-                } catch {
+                guard context.start() == noErr else {
                     Task { @MainActor [weak self] in
-                        self?.handleEngineStartFailure(
+                        self?.handleAudioUnitStartFailure(
                             sessionIdentifier: context.sessionIdentifier
                         )
                     }
+                    return
                 }
             }
         }
@@ -192,6 +241,8 @@ final class AVAudioEngineRecorder: AudioRecorder {
 
         startContinuation?.resume(throwing: CancellationError())
         startContinuation = nil
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
         removeFailureObservers(from: context)
         clearContext(ifMatching: context)
         await tearDownCapture(context)
@@ -215,12 +266,14 @@ final class AVAudioEngineRecorder: AudioRecorder {
         removeFailureObservers(from: context)
         startContinuation?.resume(throwing: CancellationError())
         startContinuation = nil
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
         hasAcceptedAudio = false
         isExpectedFinish = false
         engineStartBeganAt = nil
 
         runtime.queue.async { [weak self, context] in
-            _ = context.stopEngineAndDisposeWriter()
+            _ = context.stopAndDisposeWriter()
             Task { @MainActor [weak self] in
                 guard let self else {
                     return
@@ -253,6 +306,8 @@ final class AVAudioEngineRecorder: AudioRecorder {
         removeFailureObservers(from: context)
         startContinuation?.resume(throwing: CancellationError())
         startContinuation = nil
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
         hasAcceptedAudio = false
         isExpectedFinish = false
         engineStartBeganAt = nil
@@ -266,9 +321,9 @@ final class AVAudioEngineRecorder: AudioRecorder {
     private func configureCapture(
         profile: RecordingProfile,
         outputURL: URL,
-        device: AVCaptureDevice,
+        candidate: AudioInputCaptureCandidate,
         sessionIdentifier: UUID
-    ) async throws -> AudioEngineCaptureContext {
+    ) async throws -> CoreAudioCaptureContext {
         let onFirstBuffer: @Sendable (UUID) -> Void = {
             [weak self] identifier in
             Task { @MainActor [weak self] in
@@ -290,46 +345,17 @@ final class AVAudioEngineRecorder: AudioRecorder {
             runtime.queue.async {
                 [runtime, onFirstBuffer, onWriteFailure] in
                 do {
-                    guard !runtime.engine.isRunning else {
-                        throw AudioRecorderError.cannotConfigure
-                    }
-
-                    let inputNode = runtime.engine.inputNode
-                    let inputFormat = inputNode.outputFormat(forBus: 0)
-                    guard
-                        inputFormat.sampleRate > 0,
-                        inputFormat.channelCount > 0
-                    else {
-                        throw AudioRecorderError.cannotConfigure
-                    }
-
-                    let writer = try StreamingM4AWriter(
-                        url: outputURL,
-                        inputFormat: inputFormat,
-                        profile: profile
-                    )
-                    let preparedContext = AudioEngineCaptureContext(
+                    let preparedContext = try CoreAudioCaptureContext.make(
                         runtime: runtime,
-                        inputNode: inputNode,
-                        device: device,
-                        writer: writer,
+                        deviceID: candidate.deviceID,
                         outputURL: outputURL,
-                        inputDeviceName: device.localizedName,
+                        inputDeviceName: candidate.name,
+                        isUsingFallback: candidate.isFallback,
                         profile: profile,
                         sessionIdentifier: sessionIdentifier,
                         onFirstBuffer: onFirstBuffer,
                         onWriteFailure: onWriteFailure
                     )
-
-                    inputNode.installTap(
-                        onBus: 0,
-                        bufferSize: 256,
-                        format: inputFormat
-                    ) { [weak preparedContext] buffer, _ in
-                        preparedContext?.accept(buffer)
-                    }
-                    preparedContext.tapInstalled = true
-                    runtime.engine.prepare()
                     continuation.resume(returning: preparedContext)
                 } catch let error as AudioRecorderError {
                     continuation.resume(throwing: error)
@@ -354,6 +380,8 @@ final class AVAudioEngineRecorder: AudioRecorder {
         }
 
         startContinuation = nil
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
         hasAcceptedAudio = true
         if let engineStartBeganAt {
             let elapsedMilliseconds = Int(
@@ -363,14 +391,14 @@ final class AVAudioEngineRecorder: AudioRecorder {
                 ) * 1_000
             )
             AppLog.capture.info(
-                "Audio engine reached first buffer in \(elapsedMilliseconds, privacy: .public) ms"
+                "Audio input unit reached first buffer in \(elapsedMilliseconds, privacy: .public) ms"
             )
         }
         self.engineStartBeganAt = nil
         continuation.resume()
     }
 
-    private func handleEngineStartFailure(
+    private func handleAudioUnitStartFailure(
         sessionIdentifier: UUID
     ) {
         guard
@@ -381,6 +409,8 @@ final class AVAudioEngineRecorder: AudioRecorder {
         }
 
         startContinuation = nil
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
         engineStartBeganAt = nil
         continuation.resume(
             throwing: AudioRecorderError.cannotStart
@@ -400,7 +430,7 @@ final class AVAudioEngineRecorder: AudioRecorder {
         }
 
         if !hasAcceptedAudio {
-            handleEngineStartFailure(
+            handleAudioUnitStartFailure(
                 sessionIdentifier: sessionIdentifier
             )
             return
@@ -410,60 +440,44 @@ final class AVAudioEngineRecorder: AudioRecorder {
     }
 
     private func installFailureObservers(
-        for context: AudioEngineCaptureContext
+        for context: CoreAudioCaptureContext
     ) {
-        let center = NotificationCenter.default
-
-        context.observerTokens.append(
-            center.addObserver(
-                forName: AVCaptureDevice.wasDisconnectedNotification,
-                object: context.device,
-                queue: nil
-            ) { [weak self, weak context] _ in
-                guard let context else {
+        context.deviceAvailabilityObservation =
+            CoreAudioPropertyObservation(
+                objectID: context.deviceID,
+                addresses: [CoreAudioHardware.deviceAliveAddress]
+            ) { [weak self, weak context] in
+                guard
+                    let context,
+                    !CoreAudioHardware.isAlive(context.deviceID)
+                else {
                     return
                 }
-                Task { @MainActor [weak self] in
-                    self?.handleUnexpectedCaptureSignal(for: context)
-                }
+                self?.handleUnexpectedCaptureSignal(for: context)
             }
-        )
-
-        context.observerTokens.append(
-            center.addObserver(
-                forName: .AVAudioEngineConfigurationChange,
-                object: context.runtime.engine,
-                queue: nil
-            ) { [weak self, weak context] _ in
-                guard let context else {
-                    return
-                }
-                Task { @MainActor [weak self] in
-                    guard self?.hasAcceptedAudio == true else {
-                        return
-                    }
-                    self?.handleUnexpectedCaptureSignal(for: context)
-                }
-            }
-        )
     }
 
     private func removeFailureObservers(
-        from context: AudioEngineCaptureContext
+        from context: CoreAudioCaptureContext
     ) {
-        let center = NotificationCenter.default
-        context.observerTokens.forEach(center.removeObserver)
-        context.observerTokens.removeAll()
+        context.deviceAvailabilityObservation = nil
     }
 
     private func handleUnexpectedCaptureSignal(
-        for candidate: AudioEngineCaptureContext
+        for candidate: CoreAudioCaptureContext
     ) {
         guard
             context === candidate,
             !candidate.isHandlingUnexpectedFailure,
             !isExpectedFinish
         else {
+            return
+        }
+
+        if !hasAcceptedAudio {
+            handleAudioUnitStartFailure(
+                sessionIdentifier: candidate.sessionIdentifier
+            )
             return
         }
 
@@ -478,7 +492,7 @@ final class AVAudioEngineRecorder: AudioRecorder {
     }
 
     private func reportUnexpectedCaptureOutcome(
-        _ context: AudioEngineCaptureContext
+        _ context: CoreAudioCaptureContext
     ) async {
         do {
             let outputURL = try await finishCapture(context)
@@ -504,40 +518,54 @@ final class AVAudioEngineRecorder: AudioRecorder {
     }
 
     private func finishCapture(
-        _ context: AudioEngineCaptureContext
+        _ context: CoreAudioCaptureContext
     ) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
+        let result = await withCheckedContinuation { continuation in
             runtime.queue.async { [context] in
-                let status = context.stopEngineAndDisposeWriter()
-                if status == noErr {
-                    continuation.resume(returning: context.outputURL)
-                } else {
-                    continuation.resume(
-                        throwing: AudioRecorderError.cannotFinalize
-                    )
-                }
+                continuation.resume(
+                    returning: context.stopAndDisposeWriter()
+                )
             }
         }
+
+        if !result.audioUnitTeardown.wasDisposed {
+            AppLog.capture.error(
+                "Audio input teardown could not safely dispose capture resources"
+            )
+        } else if result.audioUnitTeardown.failureCount > 0 {
+            AppLog.capture.notice(
+                "Audio input teardown completed with \(result.audioUnitTeardown.failureCount, privacy: .public) best-effort failure(s)"
+            )
+        }
+        guard
+            result.audioUnitTeardown.wasDisposed,
+            result.writerFinalizationStatus == noErr
+        else {
+            throw AudioRecorderError.cannotFinalize
+        }
+        return context.outputURL
     }
 
     private func tearDownCapture(
-        _ context: AudioEngineCaptureContext
+        _ context: CoreAudioCaptureContext
     ) async {
         await withCheckedContinuation { continuation in
             runtime.queue.async { [context] in
-                _ = context.stopEngineAndDisposeWriter()
+                _ = context.stopAndDisposeWriter()
                 continuation.resume()
             }
         }
     }
 
     private func clearContext(
-        ifMatching candidate: AudioEngineCaptureContext
+        ifMatching candidate: CoreAudioCaptureContext
     ) {
         guard context === candidate else {
             return
         }
         context = nil
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
         hasAcceptedAudio = false
         isExpectedFinish = false
         engineStartBeganAt = nil
@@ -545,7 +573,7 @@ final class AVAudioEngineRecorder: AudioRecorder {
 
     private func validateArtifact(
         at url: URL,
-        context: AudioEngineCaptureContext
+        context: CoreAudioCaptureContext
     ) async throws -> AudioArtifact {
         let asset = AVURLAsset(url: url)
 
@@ -584,93 +612,395 @@ final class AVAudioEngineRecorder: AudioRecorder {
     }
 }
 
-// SAFETY: The reusable engine and all engine control operations are owned by
-// `queue`. The engine is stopped before a context's writer is disposed.
-nonisolated private final class AudioEngineRuntime: @unchecked Sendable {
+// SAFETY: All AUHAL lifecycle operations are serialized on `queue`. A capture
+// context stops its unit before releasing callback buffers or its writer.
+nonisolated private final class AudioUnitRuntime: @unchecked Sendable {
     let queue = DispatchQueue(
-        label: "com.danijelmitrovic.DictationApp.audio-engine",
+        label: "com.danijelmitrovic.DictationApp.audio-unit",
         qos: .userInteractive
     )
-    let engine = AVAudioEngine()
 }
 
-// SAFETY: Mutable presentation fields and observer tokens are accessed only on
-// MainActor. `tapInstalled`, engine control, and writer disposal are owned by
-// AudioEngineRuntime.queue. The render callback is the writer's sole producer;
-// engine shutdown completes before the queue disposes the writer.
-nonisolated private final class AudioEngineCaptureContext:
+nonisolated private func coreAudioInputCallback(
+    _ reference: UnsafeMutableRawPointer,
+    _ actionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+    _ timeStamp: UnsafePointer<AudioTimeStamp>,
+    _ busNumber: UInt32,
+    _ frameCount: UInt32,
+    _ outputData: UnsafeMutablePointer<AudioBufferList>?
+) -> OSStatus {
+    let context = Unmanaged<CoreAudioCaptureContext>
+        .fromOpaque(reference)
+        .takeUnretainedValue()
+    return context.render(
+        actionFlags: actionFlags,
+        timeStamp: timeStamp,
+        busNumber: busNumber,
+        frameCount: frameCount
+    )
+}
+
+// SAFETY: AUHAL start/stop/initialize/dispose and writer disposal are owned by
+// AudioUnitRuntime.queue. While the unit is running, its real-time callback is
+// the sole producer and exclusively mutates the buffer/reporting flags. Stop
+// completes before the queue releases callback-owned state. MainActor owns
+// only the device observation and unexpected-failure presentation flag.
+nonisolated private final class CoreAudioCaptureContext:
     @unchecked Sendable
 {
-    let runtime: AudioEngineRuntime
-    let inputNode: AVAudioInputNode
-    let device: AVCaptureDevice
-    let writer: StreamingM4AWriter
+    let runtime: AudioUnitRuntime
+    let deviceID: AudioObjectID
     let outputURL: URL
     let inputDeviceName: String
+    let isUsingFallback: Bool
     let profile: RecordingProfile
     let sessionIdentifier: UUID
     let onFirstBuffer: @Sendable (UUID) -> Void
     let onWriteFailure: @Sendable (UUID) -> Void
 
-    var observerTokens: [NSObjectProtocol] = []
+    var deviceAvailabilityObservation:
+        CoreAudioPropertyObservation?
     var isHandlingUnexpectedFailure = false
-    var tapInstalled = false
 
+    private var audioUnit: AudioUnit?
+    private let inputBuffer: AVAudioPCMBuffer
+    private let writer: StreamingM4AWriter
+    private var isInitialized = false
+    private var isStarted = false
     private var didReportFirstBuffer = false
     private var didReportWriteFailure = false
 
-    init(
-        runtime: AudioEngineRuntime,
-        inputNode: AVAudioInputNode,
-        device: AVCaptureDevice,
+    private init(
+        runtime: AudioUnitRuntime,
+        audioUnit: AudioUnit,
+        inputBuffer: AVAudioPCMBuffer,
+        deviceID: AudioObjectID,
         writer: StreamingM4AWriter,
         outputURL: URL,
         inputDeviceName: String,
+        isUsingFallback: Bool,
         profile: RecordingProfile,
         sessionIdentifier: UUID,
         onFirstBuffer: @escaping @Sendable (UUID) -> Void,
         onWriteFailure: @escaping @Sendable (UUID) -> Void
     ) {
         self.runtime = runtime
-        self.inputNode = inputNode
-        self.device = device
+        self.audioUnit = audioUnit
+        self.inputBuffer = inputBuffer
+        self.deviceID = deviceID
         self.writer = writer
         self.outputURL = outputURL
         self.inputDeviceName = inputDeviceName
+        self.isUsingFallback = isUsingFallback
         self.profile = profile
         self.sessionIdentifier = sessionIdentifier
         self.onFirstBuffer = onFirstBuffer
         self.onWriteFailure = onWriteFailure
     }
 
-    func accept(_ buffer: AVAudioPCMBuffer) {
-        let status = writer.write(buffer)
-        guard status == noErr else {
-            if !didReportWriteFailure {
-                didReportWriteFailure = true
-                onWriteFailure(sessionIdentifier)
+    static func make(
+        runtime: AudioUnitRuntime,
+        deviceID: AudioObjectID,
+        outputURL: URL,
+        inputDeviceName: String,
+        isUsingFallback: Bool,
+        profile: RecordingProfile,
+        sessionIdentifier: UUID,
+        onFirstBuffer: @escaping @Sendable (UUID) -> Void,
+        onWriteFailure: @escaping @Sendable (UUID) -> Void
+    ) throws -> CoreAudioCaptureContext {
+        var description = AudioComponentDescription(
+            componentType: kAudioUnitType_Output,
+            componentSubType: kAudioUnitSubType_HALOutput,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        guard let component = AudioComponentFindNext(nil, &description) else {
+            throw AudioRecorderError.cannotConfigure
+        }
+
+        var instance: AudioUnit?
+        guard
+            AudioComponentInstanceNew(component, &instance) == noErr,
+            let audioUnit = instance
+        else {
+            throw AudioRecorderError.cannotConfigure
+        }
+
+        var context: CoreAudioCaptureContext?
+        do {
+            var enableInput: UInt32 = 1
+            try requireNoError(
+                AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioOutputUnitProperty_EnableIO,
+                    kAudioUnitScope_Input,
+                    1,
+                    &enableInput,
+                    UInt32(MemoryLayout<UInt32>.size)
+                )
+            )
+
+            var disableOutput: UInt32 = 0
+            try requireNoError(
+                AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioOutputUnitProperty_EnableIO,
+                    kAudioUnitScope_Output,
+                    0,
+                    &disableOutput,
+                    UInt32(MemoryLayout<UInt32>.size)
+                )
+            )
+
+            var selectedDeviceID = deviceID
+            try requireNoError(
+                AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioOutputUnitProperty_CurrentDevice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &selectedDeviceID,
+                    UInt32(MemoryLayout<AudioObjectID>.size)
+                )
+            )
+
+            var deviceFormat = AudioStreamBasicDescription()
+            var formatSize = UInt32(
+                MemoryLayout<AudioStreamBasicDescription>.size
+            )
+            try requireNoError(
+                AudioUnitGetProperty(
+                    audioUnit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Input,
+                    1,
+                    &deviceFormat,
+                    &formatSize
+                )
+            )
+            guard
+                deviceFormat.mSampleRate > 0,
+                deviceFormat.mChannelsPerFrame > 0,
+                profile.channelCount > 0
+            else {
+                throw AudioRecorderError.cannotConfigure
             }
-            return
-        }
 
-        guard !didReportFirstBuffer else {
-            return
+            let channelCount = AVAudioChannelCount(
+                min(
+                    UInt32(profile.channelCount),
+                    deviceFormat.mChannelsPerFrame
+                )
+            )
+            guard
+                let inputFormat = AVAudioFormat(
+                    commonFormat: .pcmFormatFloat32,
+                    sampleRate: deviceFormat.mSampleRate,
+                    channels: channelCount,
+                    interleaved: false
+                )
+            else {
+                throw AudioRecorderError.cannotConfigure
+            }
+
+            var clientFormat = inputFormat.streamDescription.pointee
+            try requireNoError(
+                AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioUnitProperty_StreamFormat,
+                    kAudioUnitScope_Output,
+                    1,
+                    &clientFormat,
+                    UInt32(
+                        MemoryLayout<AudioStreamBasicDescription>.size
+                    )
+                )
+            )
+
+            var maximumFrames: UInt32 = 0
+            var maximumFramesSize = UInt32(
+                MemoryLayout<UInt32>.size
+            )
+            try requireNoError(
+                AudioUnitGetProperty(
+                    audioUnit,
+                    kAudioUnitProperty_MaximumFramesPerSlice,
+                    kAudioUnitScope_Global,
+                    0,
+                    &maximumFrames,
+                    &maximumFramesSize
+                )
+            )
+            guard
+                maximumFrames > 0,
+                let inputBuffer = AVAudioPCMBuffer(
+                    pcmFormat: inputFormat,
+                    frameCapacity: maximumFrames
+                )
+            else {
+                throw AudioRecorderError.cannotConfigure
+            }
+
+            let writer = try StreamingM4AWriter(
+                url: outputURL,
+                inputFormat: inputFormat,
+                profile: profile
+            )
+            let preparedContext = CoreAudioCaptureContext(
+                runtime: runtime,
+                audioUnit: audioUnit,
+                inputBuffer: inputBuffer,
+                deviceID: deviceID,
+                writer: writer,
+                outputURL: outputURL,
+                inputDeviceName: inputDeviceName,
+                isUsingFallback: isUsingFallback,
+                profile: profile,
+                sessionIdentifier: sessionIdentifier,
+                onFirstBuffer: onFirstBuffer,
+                onWriteFailure: onWriteFailure
+            )
+            context = preparedContext
+
+            var callback = AURenderCallbackStruct(
+                inputProc: coreAudioInputCallback,
+                inputProcRefCon: Unmanaged
+                    .passUnretained(preparedContext)
+                    .toOpaque()
+            )
+            try requireNoError(
+                AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioOutputUnitProperty_SetInputCallback,
+                    kAudioUnitScope_Global,
+                    0,
+                    &callback,
+                    UInt32(MemoryLayout<AURenderCallbackStruct>.size)
+                )
+            )
+            try requireNoError(AudioUnitInitialize(audioUnit))
+            preparedContext.isInitialized = true
+            return preparedContext
+        } catch {
+            if let context {
+                _ = context.stopAndDisposeWriter()
+            } else {
+                _ = AudioComponentInstanceDispose(audioUnit)
+            }
+            throw error
         }
-        didReportFirstBuffer = true
-        onFirstBuffer(sessionIdentifier)
     }
 
-    func stopEngineAndDisposeWriter() -> OSStatus {
-        if runtime.engine.isRunning {
-            runtime.engine.stop()
+    func start() -> OSStatus {
+        guard let audioUnit, isInitialized, !isStarted else {
+            return kAudioUnitErr_Uninitialized
         }
-        if tapInstalled {
-            inputNode.removeTap(onBus: 0)
-            tapInstalled = false
+        let status = AudioOutputUnitStart(audioUnit)
+        if status == noErr {
+            isStarted = true
+        }
+        return status
+    }
+
+    func render(
+        actionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+        timeStamp: UnsafePointer<AudioTimeStamp>,
+        busNumber: UInt32,
+        frameCount: UInt32
+    ) -> OSStatus {
+        guard
+            let audioUnit,
+            frameCount > 0,
+            frameCount <= inputBuffer.frameCapacity
+        else {
+            reportWriteFailureOnce()
+            return kAudio_ParamError
         }
 
-        return writer.finish()
+        inputBuffer.frameLength = frameCount
+        let renderStatus = AudioUnitRender(
+            audioUnit,
+            actionFlags,
+            timeStamp,
+            busNumber,
+            frameCount,
+            inputBuffer.mutableAudioBufferList
+        )
+        guard renderStatus == noErr else {
+            reportWriteFailureOnce()
+            return renderStatus
+        }
+
+        let writeStatus = writer.write(inputBuffer)
+        guard writeStatus == noErr else {
+            reportWriteFailureOnce()
+            return writeStatus
+        }
+
+        if !didReportFirstBuffer {
+            didReportFirstBuffer = true
+            onFirstBuffer(sessionIdentifier)
+        }
+        return noErr
     }
+
+    func stopAndDisposeWriter() -> CaptureFinalizationResult {
+        var teardownFailureCount = 0
+        func recordTeardown(_ status: OSStatus) {
+            if status != noErr {
+                teardownFailureCount += 1
+            }
+        }
+
+        var wasDisposed = true
+        if let audioUnit {
+            if isStarted {
+                recordTeardown(AudioOutputUnitStop(audioUnit))
+                isStarted = false
+            }
+            if isInitialized {
+                recordTeardown(AudioUnitUninitialize(audioUnit))
+                isInitialized = false
+            }
+            let disposeStatus = AudioComponentInstanceDispose(audioUnit)
+            recordTeardown(disposeStatus)
+            wasDisposed = disposeStatus == noErr
+            self.audioUnit = nil
+        }
+        return CaptureFinalizationResult(
+            audioUnitTeardown: AudioUnitTeardownResult(
+                failureCount: teardownFailureCount,
+                wasDisposed: wasDisposed
+            ),
+            writerFinalizationStatus: writer.finish()
+        )
+    }
+
+    private func reportWriteFailureOnce() {
+        guard !didReportWriteFailure else {
+            return
+        }
+        didReportWriteFailure = true
+        onWriteFailure(sessionIdentifier)
+    }
+
+    private static func requireNoError(_ status: OSStatus) throws {
+        guard status == noErr else {
+            throw AudioRecorderError.cannotConfigure
+        }
+    }
+}
+
+nonisolated private struct CaptureFinalizationResult: Sendable {
+    let audioUnitTeardown: AudioUnitTeardownResult
+    let writerFinalizationStatus: OSStatus
+}
+
+nonisolated private struct AudioUnitTeardownResult: Sendable {
+    let failureCount: Int
+    let wasDisposed: Bool
 }
 
 nonisolated private enum StreamingM4AWriterError: Error {
@@ -678,8 +1008,8 @@ nonisolated private enum StreamingM4AWriterError: Error {
     case cannotConfigure
 }
 
-// SAFETY: `write` is called serially by one AVAudioEngine render callback.
-// `finish` runs only after the engine has stopped and its tap has been removed.
+// SAFETY: `write` is called serially by one AUHAL input callback. `finish`
+// runs only after the input unit has stopped and been uninitialized.
 // The underlying ExtAudioFile is never accessed concurrently across those
 // phases, and asynchronous writes are flushed by ExtAudioFileDispose.
 nonisolated private final class StreamingM4AWriter: @unchecked Sendable {

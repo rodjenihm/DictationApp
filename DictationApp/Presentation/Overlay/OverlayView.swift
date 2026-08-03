@@ -159,7 +159,7 @@ struct OverlayView: View {
         switch state {
         case .preparing:
             "Activating microphone…"
-        case .recording(let elapsed, _, _):
+        case .recording(let elapsed, _, _, _):
             "Recording \(formatDuration(elapsed))"
         case .finalizing(let reason):
             switch reason {
@@ -203,10 +203,17 @@ struct OverlayView: View {
 
     private var detail: String? {
         switch state {
-        case .recording(_, let inputDeviceName, let isNearDurationLimit):
-            isNearDurationLimit
-                ? "\(inputDeviceName) — recording limit soon"
-                : inputDeviceName
+        case .recording(
+            _,
+            let inputDeviceName,
+            let isUsingFallback,
+            let isNearDurationLimit
+        ):
+            recordingDetail(
+                inputDeviceName: inputDeviceName,
+                isUsingFallback: isUsingFallback,
+                isNearDurationLimit: isNearDurationLimit
+            )
         case .finalizing(.automaticLimit):
             "Finalizing the captured audio"
         case .completed:
@@ -243,7 +250,6 @@ struct OverlayView: View {
     private var detailColor: Color {
         switch state {
         case
-            .recording(_, _, true),
             .tooShort,
             .failed,
             .transcriptionFailed,
@@ -252,6 +258,8 @@ struct OverlayView: View {
             .insertionUnverified,
             .clipboardFallback:
             .orange
+        case .recording(_, _, let isUsingFallback, let isNearDurationLimit):
+            isUsingFallback || isNearDurationLimit ? .orange : .secondary
         default:
             .secondary
         }
@@ -277,5 +285,20 @@ struct OverlayView: View {
             totalSeconds / 60,
             totalSeconds % 60
         )
+    }
+
+    private func recordingDetail(
+        inputDeviceName: String,
+        isUsingFallback: Bool,
+        isNearDurationLimit: Bool
+    ) -> String {
+        var components = [inputDeviceName]
+        if isUsingFallback {
+            components.append("preferred microphone unavailable")
+        }
+        if isNearDurationLimit {
+            components.append("recording limit soon")
+        }
+        return components.joined(separator: " — ")
     }
 }

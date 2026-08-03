@@ -2,6 +2,7 @@ import Foundation
 
 struct PreparedRecording: Equatable, Sendable {
     let inputDeviceName: String
+    let isUsingFallback: Bool
 }
 
 enum AudioRecorderError: Error, Equatable, Sendable {
@@ -27,6 +28,7 @@ protocol AudioRecorder: AnyObject {
 
     func prepare(
         profile: RecordingProfile,
+        audioInputPreference: AudioInputPreference,
         sessionIdentifier: UUID
     ) async throws -> PreparedRecording
     func startPreparedRecording() async throws

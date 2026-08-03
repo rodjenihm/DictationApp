@@ -79,6 +79,7 @@ enum PostProcessingMode:
 }
 
 struct AppConfiguration: Codable, Equatable, Sendable {
+    var audioInputPreference: AudioInputPreference
     var transcription: StageConfiguration
     var transcriptionLanguagesByProvider:
         [ProviderID: LanguageSelection]
@@ -86,6 +87,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var postProcessing: StageConfiguration
 
     static let `default` = AppConfiguration(
+        audioInputPreference: .default,
         transcription: StageConfiguration(
             activeProvider: .openAI,
             modelsByProvider: [
@@ -107,12 +109,14 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     )
 
     init(
+        audioInputPreference: AudioInputPreference = .default,
         transcription: StageConfiguration,
         transcriptionLanguagesByProvider:
             [ProviderID: LanguageSelection],
         postProcessingMode: PostProcessingMode,
         postProcessing: StageConfiguration
     ) {
+        self.audioInputPreference = audioInputPreference
         self.transcription = transcription
         self.transcriptionLanguagesByProvider =
             transcriptionLanguagesByProvider
@@ -121,6 +125,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     }
 
     init(
+        audioInputPreference: AudioInputPreference = .default,
         transcriptionProvider: ProviderID,
         transcriptionModel: ModelSelection,
         language: LanguageSelection,
@@ -128,6 +133,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         postProcessingProvider: ProviderID,
         postProcessingModel: ModelSelection
     ) {
+        self.audioInputPreference = audioInputPreference
         transcription = StageConfiguration(
             activeProvider: transcriptionProvider,
             modelsByProvider: [

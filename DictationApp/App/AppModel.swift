@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     private let validator = OpenAIConfigurationValidator()
     private let permissionService = PermissionService()
     private let shortcutService = GlobalShortcutService()
+    private let audioInputDeviceService =
+        CoreAudioInputDeviceService()
     private let recordingFileStore = RecordingFileStore()
     private let providerRuntimeHealth =
         ProviderRuntimeHealthStore()
@@ -27,8 +29,9 @@ final class AppModel: ObservableObject {
     private var sessionStateCancellable: AnyCancellable?
     private var providerSettingsCancellables: [AnyCancellable] = []
 
-    private lazy var audioRecorder = AVAudioEngineRecorder(
-        fileStore: recordingFileStore
+    private lazy var audioRecorder = CoreAudioRecorder(
+        fileStore: recordingFileStore,
+        audioInputDeviceService: audioInputDeviceService
     )
 
     private lazy var transcriptionProvider = OpenAITranscriptionProvider(
@@ -97,6 +100,7 @@ final class AppModel: ObservableObject {
             settingsStore: settingsStore,
             permissionService: permissionService,
             shortcutService: shortcutService,
+            audioInputDeviceService: audioInputDeviceService,
             providerRegistry: providerRegistry,
             providerRuntimeHealth: providerRuntimeHealth
         )
@@ -425,9 +429,10 @@ final class AppModel: ObservableObject {
         case .recording(let recording):
             let elapsed = formatDuration(recording.elapsed)
             statusText =
-                recording.isNearDurationLimit
-                ? "Recording \(elapsed) — \(recording.inputDeviceName) — limit soon"
-                : "Recording \(elapsed) — \(recording.inputDeviceName)"
+                recordingStatusText(
+                    elapsed: elapsed,
+                    recording: recording
+                )
             primaryActionTitle = "Stop Dictation"
             isPrimaryActionEnabled = true
             canCancel = true
@@ -435,6 +440,7 @@ final class AppModel: ObservableObject {
                 .recording(
                     elapsed: recording.elapsed,
                     inputDeviceName: recording.inputDeviceName,
+                    isUsingFallback: recording.isUsingFallback,
                     isNearDurationLimit: recording.isNearDurationLimit
                 )
             )
@@ -589,6 +595,23 @@ final class AppModel: ObservableObject {
             totalSeconds / 60,
             totalSeconds % 60
         )
+    }
+
+    private func recordingStatusText(
+        elapsed: String,
+        recording: RecordingSessionState
+    ) -> String {
+        var components = [
+            "Recording \(elapsed)",
+            recording.inputDeviceName,
+        ]
+        if recording.isUsingFallback {
+            components.append("preferred microphone unavailable")
+        }
+        if recording.isNearDurationLimit {
+            components.append("limit soon")
+        }
+        return components.joined(separator: " — ")
     }
 
     private func configurationAccess(

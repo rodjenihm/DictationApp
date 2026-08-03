@@ -139,6 +139,7 @@ final class ConfigurationViewModel {
         AppConfiguration.default.postProcessingProvider
     var postProcessingModelChoice = ""
     var postProcessingCustomModel = ""
+    var audioInputPreference = AudioInputPreference.default
     var soundCuesEnabled = true
     private(set) var globalShortcut =
         GlobalShortcut.defaultShortcut
@@ -179,6 +180,9 @@ final class ConfigurationViewModel {
     @ObservationIgnored
     private let shortcutService: GlobalShortcutService
     @ObservationIgnored
+    private let audioInputDeviceService:
+        CoreAudioInputDeviceService
+    @ObservationIgnored
     private let providerRuntimeHealth:
         ProviderRuntimeHealthStore
     private var savedConfiguration: AppConfiguration = .default
@@ -206,12 +210,14 @@ final class ConfigurationViewModel {
         settingsStore: SettingsStore,
         permissionService: PermissionService,
         shortcutService: GlobalShortcutService,
+        audioInputDeviceService: CoreAudioInputDeviceService,
         providerRegistry: ProviderRegistry,
         providerRuntimeHealth: ProviderRuntimeHealthStore
     ) {
         self.settingsStore = settingsStore
         self.permissionService = permissionService
         self.shortcutService = shortcutService
+        self.audioInputDeviceService = audioInputDeviceService
         self.providerRegistry = providerRegistry
         self.providerRuntimeHealth = providerRuntimeHealth
 
@@ -358,6 +364,61 @@ final class ConfigurationViewModel {
         availableProviders(for: .transcription)
     }
 
+    var availableAudioInputDevices: [AudioInputDevice] {
+        audioInputDeviceService.devices
+    }
+
+    var audioInputSelection: AudioInputPreference.Identity {
+        get {
+            audioInputPreference.identity
+        }
+        set {
+            audioInputPreference = audioInputDeviceService.preference(
+                for: newValue,
+                retainingMetadataFrom: audioInputPreference
+            )
+        }
+    }
+
+    var isAudioInputPreferenceAvailable: Bool {
+        audioInputDeviceService.isAvailable(audioInputPreference)
+    }
+
+    var audioInputPreferenceStatusMessage: String {
+        if !isAudioInputPreferenceAvailable {
+            let name = audioInputDeviceService.displayName(
+                for: audioInputPreference
+            )
+            if audioInputPreference == .systemDefault {
+                return
+                    "No system default microphone is currently available."
+            }
+            return
+                "\(name) is unavailable. Recordings will use System Default until it reconnects."
+        }
+
+        switch audioInputPreference {
+        case .systemDefault:
+            return
+                "DictationApp uses the current macOS default input for each new recording."
+        case .builtIn, .device:
+            return
+                "DictationApp uses this microphone without changing the macOS default input."
+        }
+    }
+
+    func audioInputPreference(
+        for device: AudioInputDevice
+    ) -> AudioInputPreference {
+        audioInputDeviceService.preference(for: device)
+    }
+
+    func audioInputDisplayName(
+        for preference: AudioInputPreference
+    ) -> String {
+        audioInputDeviceService.displayName(for: preference)
+    }
+
     var availablePostProcessingProviders: [ProviderDescriptor] {
         availableProviders(for: .postProcessing)
     }
@@ -474,6 +535,8 @@ final class ConfigurationViewModel {
         switch destination {
         case .general:
             return globalShortcut != savedShortcut
+                || audioInputPreference
+                    != savedConfiguration.audioInputPreference
                 || soundCuesEnabled != savedSoundCuesEnabled
         case .transcription:
             guard let draft = draftConfiguration() else {
@@ -580,6 +643,14 @@ final class ConfigurationViewModel {
         globalShortcut = stored.globalShortcut
         soundCuesEnabled = stored.soundCuesEnabled
         apply(stored.configuration)
+        if
+            !stored.hasCompletedFirstRun,
+            audioInputPreference == .builtIn,
+            !audioInputDeviceService.hasBuiltInInput
+        {
+            savedConfiguration.audioInputPreference = .systemDefault
+            audioInputPreference = .systemDefault
+        }
         providerRegistry.settingsModules.forEach { $0.reload() }
         issues = []
         successMessage = nil
@@ -592,6 +663,7 @@ final class ConfigurationViewModel {
     }
 
     func refreshSystemState() {
+        audioInputDeviceService.refresh()
         microphoneStatus = permissionService.microphoneStatus()
         accessibilityStatus = permissionService.accessibilityStatus()
         speechRecognitionStatus =
@@ -814,6 +886,7 @@ final class ConfigurationViewModel {
 
             providerRegistry.settingsModules.forEach { $0.didSave() }
             savedConfiguration = configuration
+            audioInputPreference = configuration.audioInputPreference
             transcriptionModelsByProvider =
                 configuration.transcription.modelsByProvider
             transcriptionLanguagesByProvider =
@@ -1151,6 +1224,10 @@ final class ConfigurationViewModel {
                 : .curated(resolvedPostProcessingModel),
             for: postProcessingProviderChoice
         )
+        configuration.audioInputPreference =
+            audioInputDeviceService.refreshingPresentationMetadata(
+                for: audioInputPreference
+            )
         return configuration
     }
 
@@ -1192,6 +1269,7 @@ final class ConfigurationViewModel {
     }
 
     private func apply(_ configuration: AppConfiguration) {
+        audioInputPreference = configuration.audioInputPreference
         transcriptionModelsByProvider =
             configuration.transcription.modelsByProvider
         transcriptionLanguagesByProvider =

@@ -21,6 +21,7 @@ struct RecordingProfile: Equatable, Sendable {
 }
 
 struct SessionConfiguration: Equatable, Sendable {
+    let audioInputPreference: AudioInputPreference
     let transcriptionProvider: ProviderID
     let transcriptionModel: ModelSelection
     let language: LanguageSelection
@@ -33,6 +34,7 @@ struct SessionConfiguration: Equatable, Sendable {
         configuration: AppConfiguration,
         recordingProfile: RecordingProfile
     ) {
+        audioInputPreference = configuration.audioInputPreference
         transcriptionProvider = configuration.transcriptionProvider
         transcriptionModel = configuration.transcriptionModel
         language = configuration.language
@@ -46,6 +48,7 @@ struct SessionConfiguration: Equatable, Sendable {
         with repair: TranscriptionRepair
     ) -> SessionConfiguration {
         SessionConfiguration(
+            audioInputPreference: audioInputPreference,
             transcriptionProvider: repair.provider,
             transcriptionModel: repair.model,
             language: repair.language,
@@ -57,6 +60,7 @@ struct SessionConfiguration: Equatable, Sendable {
     }
 
     private init(
+        audioInputPreference: AudioInputPreference,
         transcriptionProvider: ProviderID,
         transcriptionModel: ModelSelection,
         language: LanguageSelection,
@@ -65,6 +69,7 @@ struct SessionConfiguration: Equatable, Sendable {
         postProcessingModel: ModelSelection,
         recordingProfile: RecordingProfile
     ) {
+        self.audioInputPreference = audioInputPreference
         self.transcriptionProvider = transcriptionProvider
         self.transcriptionModel = transcriptionModel
         self.language = language
@@ -96,6 +101,7 @@ struct AudioArtifact: Equatable, Sendable {
 struct RecordingSessionState: Equatable, Sendable {
     let configuration: SessionConfiguration
     let inputDeviceName: String
+    let isUsingFallback: Bool
     let elapsed: TimeInterval
     let isNearDurationLimit: Bool
 }
@@ -123,9 +129,9 @@ enum DictationCaptureError: Equatable, LocalizedError, Sendable {
         case .microphoneRestricted:
             "Microphone access is restricted on this Mac."
         case .noInputDevice:
-            "No default microphone input is available."
+            "No microphone is available. Connect an input device or choose another microphone in Settings."
         case .cannotConfigureCapture:
-            "The default microphone could not be configured for recording."
+            "The selected microphone could not be configured for recording."
         case .cannotStartCapture:
             "Audio recording could not start."
         case .cannotFinalizeRecording:

@@ -5,6 +5,7 @@ enum OverlayViewState: Equatable {
     case recording(
         elapsed: TimeInterval,
         inputDeviceName: String,
+        isUsingFallback: Bool,
         isNearDurationLimit: Bool
     )
     case finalizing(RecordingFinalizationReason)

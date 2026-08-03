@@ -264,6 +264,8 @@ final class DictationCoordinator: ObservableObject {
             )
             let prepared = try await recorder.prepare(
                 profile: configuration.recordingProfile,
+                audioInputPreference:
+                    configuration.audioInputPreference,
                 sessionIdentifier: token.id
             )
             try requireCurrent(token)
@@ -275,6 +277,7 @@ final class DictationCoordinator: ObservableObject {
                 token: token,
                 configuration: configuration,
                 inputDeviceName: prepared.inputDeviceName,
+                isUsingFallback: prepared.isUsingFallback,
                 startedAt: clock.now,
                 soundCuesEnabled: soundCuesEnabled
             )
@@ -1361,6 +1364,7 @@ final class DictationCoordinator: ObservableObject {
             RecordingSessionState(
                 configuration: activeSession.configuration,
                 inputDeviceName: activeSession.inputDeviceName,
+                isUsingFallback: activeSession.isUsingFallback,
                 elapsed: elapsed,
                 isNearDurationLimit:
                     elapsed >= profile.warningDuration
@@ -1490,6 +1494,7 @@ private struct ActiveSession {
     let token: SessionToken
     let configuration: SessionConfiguration
     let inputDeviceName: String
+    let isUsingFallback: Bool
     let startedAt: ContinuousClock.Instant
     let soundCuesEnabled: Bool
 }

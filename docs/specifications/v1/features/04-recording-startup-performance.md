@@ -14,6 +14,10 @@ temporary-artifact requirements in
 `docs/specifications/v1/application.md`. It preserves the provider and retained
 recording behavior defined by the existing v1 specifications.
 
+The input-device resolution and capture-owner requirements are superseded by
+`05-microphone-selection.md`. Its dedicated AUHAL retains this specification's
+streaming writer, first-buffer truthfulness, cancellation, and latency goals.
+
 ## Motivation
 
 Before this change, the recorder constructed and started an

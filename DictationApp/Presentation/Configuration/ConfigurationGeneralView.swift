@@ -9,10 +9,70 @@ struct ConfigurationGeneralView: View {
             detail: "Permissions, shortcut, feedback, and privacy behavior."
         ) {
             permissionsSection
+            recordingSection
             shortcutSection
             feedbackSection
             privacySection
         }
+    }
+
+    private var recordingSection: some View {
+        ConfigurationSettingsGroup(
+            "Recording",
+            systemImage: "mic"
+        ) {
+            LabeledContent("Microphone") {
+                Picker(
+                    "Microphone",
+                    selection: $viewModel.audioInputSelection
+                ) {
+                    Text("System Default")
+                        .tag(AudioInputPreference.Identity.systemDefault)
+
+                    ForEach(viewModel.availableAudioInputDevices) {
+                        device in
+                        Text(device.name)
+                            .tag(
+                                viewModel.audioInputPreference(
+                                    for: device
+                                ).identity
+                            )
+                    }
+
+                    if shouldShowUnavailablePreference {
+                        Text(
+                            "\(viewModel.audioInputDisplayName(for: viewModel.audioInputPreference)) — Unavailable"
+                        )
+                        .tag(viewModel.audioInputPreference.identity)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: 320)
+                .accessibilityLabel("Microphone")
+                .accessibilityValue(
+                    viewModel.audioInputDisplayName(
+                        for: viewModel.audioInputPreference
+                    )
+                )
+            }
+
+            Text(viewModel.audioInputPreferenceStatusMessage)
+                .font(.caption)
+                .foregroundStyle(
+                    viewModel.isAudioInputPreferenceAvailable
+                        ? Color.secondary
+                        : Color.orange
+                )
+        }
+    }
+
+    private var shouldShowUnavailablePreference: Bool {
+        !viewModel.isAudioInputPreferenceAvailable
+            && viewModel.audioInputPreference != .systemDefault
+            && !viewModel.availableAudioInputDevices.contains {
+                viewModel.audioInputPreference(for: $0)
+                    .identity == viewModel.audioInputPreference.identity
+            }
     }
 
     private var permissionsSection: some View {
@@ -255,7 +315,7 @@ struct ConfigurationGeneralView: View {
         case .notDetermined:
             "Enable microphone access now or allow it when starting the first recording."
         case .granted:
-            "DictationApp can record from the current macOS default input device."
+            "DictationApp can record from the microphone selected below."
         case .denied:
             "Recording remains unavailable until access is enabled in System Settings."
         case .restricted:

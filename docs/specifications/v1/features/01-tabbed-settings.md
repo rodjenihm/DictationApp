@@ -40,6 +40,9 @@ except where Settings routing and repair behavior are stated explicitly.
 
 ## Non-goals
 
+> Microphone input-device selection is implemented and specified separately
+> by `05-microphone-selection.md`, which supersedes that non-goal.
+
 - Implement a provider other than OpenAI.
 - Show disabled providers, placeholders, roadmaps, or “Coming soon” entries.
 - Add microphone input-device selection.
@@ -121,7 +124,8 @@ Contextual routing must not discard an existing Settings draft.
 
 ## General
 
-General contains four sections in this order.
+General contains five sections in this order. The Recording section defined by
+`05-microphone-selection.md` appears directly below Permissions.
 
 ### Permissions
 
@@ -133,8 +137,8 @@ Show current system-derived status for:
 Retain the existing explicit Enable and Open System Settings actions. Merely
 opening Settings must never trigger a macOS permission prompt.
 
-Microphone configuration in this feature is limited to permission status and
-actions. Recording continues to use the current macOS default input device.
+Microphone permission remains system-derived and immediate. The transactional
+input-device preference is defined by `05-microphone-selection.md`.
 
 Permission actions affect external system state immediately. They are not part
 of the Settings draft, do not mark the page dirty, and are not reverted by
