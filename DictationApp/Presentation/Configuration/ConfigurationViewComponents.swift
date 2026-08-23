@@ -19,27 +19,31 @@ struct ConfigurationPage<Content: View>: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.title2.weight(.semibold))
+                    .font(.title3.weight(.semibold))
                 Text(detail)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
 
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 20) {
                     content
                 }
+                .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
             }
         }
     }
 }
 
-struct ConfigurationSettingsGroup<Content: View>: View {
+struct ConfigurationSection<Content: View>: View {
     let title: String
     let systemImage: String
     private let content: Content
@@ -55,16 +59,67 @@ struct ConfigurationSettingsGroup<Content: View>: View {
     }
 
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            VStack(alignment: .leading, spacing: 10) {
                 content
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(4)
-        } label: {
-            Label(title, systemImage: systemImage)
-                .font(.headline)
         }
+    }
+}
+
+struct ConfigurationForm<Content: View>: View {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+enum ConfigurationStatusStyle {
+    case neutral
+    case success
+    case attention
+    case error
+    case pending
+
+    var color: Color {
+        switch self {
+        case .neutral:
+            .secondary
+        case .success:
+            .green
+        case .attention:
+            .orange
+        case .error:
+            .red
+        case .pending:
+            .blue
+        }
+    }
+}
+
+struct ConfigurationStatusLabel: View {
+    let title: String
+    let systemImage: String
+    let style: ConfigurationStatusStyle
+    var font: Font = .caption
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(font)
+            .foregroundStyle(style.color)
     }
 }
 
@@ -73,15 +128,13 @@ struct ConfigurationIssueLabel: View {
     var warning = false
 
     var body: some View {
-        Label(
-            message,
-            systemImage:
-                warning
+        ConfigurationStatusLabel(
+            title: message,
+            systemImage: warning
                 ? "exclamationmark.triangle.fill"
-                : "exclamationmark.circle.fill"
+                : "exclamationmark.circle.fill",
+            style: warning ? .attention : .error
         )
-        .font(.caption)
-        .foregroundStyle(warning ? Color.orange : Color.red)
     }
 }
 
@@ -90,14 +143,14 @@ struct ConfigurationPermissionStatusLabel: View {
     let granted: Bool
 
     var body: some View {
-        Label(
-            title,
-            systemImage:
-                granted
+        ConfigurationStatusLabel(
+            title: title,
+            systemImage: granted
                 ? "checkmark.circle.fill"
-                : "exclamationmark.circle"
+                : "exclamationmark.circle",
+            style: granted ? .success : .neutral,
+            font: .body
         )
-        .foregroundStyle(granted ? Color.green : Color.secondary)
     }
 }
 
@@ -166,11 +219,12 @@ struct ConfigurationNoProviderView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label(
-                "No provider configured",
-                systemImage: "exclamationmark.triangle"
+            ConfigurationStatusLabel(
+                title: "No provider configured",
+                systemImage: "exclamationmark.triangle.fill",
+                style: .attention,
+                font: .body
             )
-            .foregroundStyle(.orange)
             Text(
                 "Configure a provider that supports \(capability.displayName.lowercased())."
             )
@@ -179,6 +233,13 @@ struct ConfigurationNoProviderView: View {
             Button("Configure Providers") {
                 viewModel.selectedDestination = .providers
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.orange.opacity(0.06), in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.orange.opacity(0.18), lineWidth: 0.5)
         }
     }
 }

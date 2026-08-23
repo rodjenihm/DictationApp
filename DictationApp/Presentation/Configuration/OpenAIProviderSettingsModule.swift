@@ -304,15 +304,17 @@ final class OpenAIProviderSettingsModule:
 struct OpenAIProviderSettingsView: View {
     @ObservedObject var module: OpenAIProviderSettingsModule
     @State private var confirmsRemoval = false
+    @State private var showsValidationDetails = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             LabeledContent("Status") {
-                Label(
-                    readinessTitle,
-                    systemImage: readinessSystemImage
+                ConfigurationStatusLabel(
+                    title: readinessTitle,
+                    systemImage: readinessSystemImage,
+                    style: readinessStyle,
+                    font: .body
                 )
-                .foregroundStyle(readinessColor)
             }
 
             SecureField(
@@ -333,12 +335,32 @@ struct OpenAIProviderSettingsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Label(
-                "Saving may validate transcription with the bundled silent fixture and cleanup with fixed validation text. User recordings and transcripts are never used for Settings validation.",
-                systemImage: "icloud.and.arrow.up"
+            Text(
+                "Saving validates this configuration using bundled, non-user data."
             )
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            DisclosureGroup(
+                "What validation sends",
+                isExpanded: $showsValidationDetails
+            ) {
+                Label(
+                    "Transcription uses the bundled silent fixture, and cleanup uses fixed validation text. Settings validation never uses your recordings or transcripts.",
+                    systemImage: "icloud.and.arrow.up"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+            }
+            .font(.caption)
+            .accessibilityLabel("What validation sends")
+            .accessibilityValue(
+                showsValidationDetails ? "Expanded" : "Collapsed"
+            )
+            .accessibilityHint(
+                "Shows details about data used for provider validation."
+            )
 
             if module.savedCredentialExists || module.credentialIntent == .remove {
                 Button("Remove API Key", role: .destructive) {
@@ -389,14 +411,14 @@ struct OpenAIProviderSettingsView: View {
         }
     }
 
-    private var readinessColor: Color {
+    private var readinessStyle: ConfigurationStatusStyle {
         switch module.readiness.state {
         case .configured:
-            .green
+            .success
         case .pendingValidation:
-            .blue
+            .pending
         case .setupRequired, .attentionRequired, .willDisconnect:
-            .orange
+            .attention
         }
     }
 }

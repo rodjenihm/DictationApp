@@ -375,6 +375,36 @@ Verified:
   their changed paths were verified through rendering, source inspection, and
   both build configurations.
 
+2026-08-23 modernized-settings follow-up:
+
+- Replaced ordinary Settings `GroupBox` cards with a flat, compact section
+  hierarchy; standardized page headers, permission rows, statuses, provider
+  entries, the context strip, and the transactional footer while retaining the
+  existing native SwiftUI/AppKit architecture and all behavior ownership.
+- Reduced the initial Settings content size to 800 by 640 points and its
+  synchronized AppKit/SwiftUI minimum to 720 by 540. Live app-scoped
+  Accessibility inspection confirmed default, exact minimum, and expanded
+  layouts; the detail column remained leading-aligned and stopped at 680 points.
+- Inspected General, Transcription, Post-processing, both provider rows, OpenAI
+  detail, Apple On-Device detail, and the OpenAI validation disclosure without
+  mutating saved configuration or invoking a provider.
+- Final normally signed arm64 Debug and Release builds succeeded with the macOS
+  15.0 target, and both app bundles passed strict deep code-signature
+  verification.
+- `git diff --check`, changed-path scope review, semantic Light/Dark style
+  review, and changed-source logging/privacy review passed. No behavior layer,
+  dependency, framework, test target, specialized AppKit control, or macOS
+  26-only Settings API changed.
+- Screen capture, spoken VoiceOver, increased appearance/accessibility modes,
+  complete Tab traversal, and destructive or provider-backed state branches
+  were not repeated. App-scoped Accessibility metadata, unchanged specialized
+  control implementations, and prior v1 Settings evidence cover those limits as
+  detailed in the feature plan.
+- Added the missing visible Back to Providers action in provider detail. It
+  reuses the existing provider-list navigation state and supports pointer,
+  keyboard focus, Command-[, hover help, and an explicit accessibility label.
+  An isolated live Debug build confirmed activation returned both provider rows.
+
 Verification limitations:
 
 - Runtime compatibility on an actual macOS 15 Apple Silicon Mac or VM remains unavailable; binary targeting and build compatibility were verified on the current macOS 26.5 Apple Silicon host.
@@ -393,5 +423,5 @@ Verification limitations:
 
 ## Next action
 
-The **v1 implementation and compact-overlay follow-up are complete and awaiting
-review**.
+The **v1 implementation, compact-overlay follow-up, and modernized-settings
+follow-up are complete and awaiting review**.

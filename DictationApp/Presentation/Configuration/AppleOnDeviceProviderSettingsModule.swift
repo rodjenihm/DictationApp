@@ -511,13 +511,14 @@ private struct AppleOnDeviceProviderSettingsView: View {
         AppleOnDeviceProviderSettingsModule
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
             LabeledContent("Status") {
-                Label(
-                    statusTitle,
-                    systemImage: statusSystemImage
+                ConfigurationStatusLabel(
+                    title: statusTitle,
+                    systemImage: statusSystemImage,
+                    style: statusStyle,
+                    font: .body
                 )
-                .foregroundStyle(statusColor)
             }
 
             Text(availabilityMessage)
@@ -674,14 +675,14 @@ private struct AppleOnDeviceProviderSettingsView: View {
         }
     }
 
-    private var statusColor: Color {
+    private var statusStyle: ConfigurationStatusStyle {
         switch module.readiness.state {
         case .configured:
-            .green
+            .success
         case .pendingValidation:
-            .blue
+            .pending
         case .setupRequired, .attentionRequired, .willDisconnect:
-            .orange
+            .attention
         }
     }
 

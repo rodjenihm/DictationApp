@@ -23,6 +23,11 @@ defined by the application specification. It does not change the dictation
 pipeline, retry policy, provider request behavior, or text-insertion behavior
 except where Settings routing and repair behavior are stated explicitly.
 
+> The approved visual presentation in `07-modernized-settings.md` refines this
+> specification's window sizing, spacing, typography, section chrome, visual
+> hierarchy, and information presentation. This document remains authoritative
+> for Settings behavior and information architecture.
+
 ## Goals
 
 - Make Settings easier to scan and navigate.

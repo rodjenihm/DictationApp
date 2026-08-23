@@ -6,7 +6,7 @@ struct ConfigurationGeneralView: View {
     var body: some View {
         ConfigurationPage(
             title: "General",
-            detail: "Permissions, shortcut, feedback, and privacy behavior."
+            detail: "Permissions, input, shortcut, feedback, and privacy."
         ) {
             permissionsSection
             recordingSection
@@ -17,7 +17,7 @@ struct ConfigurationGeneralView: View {
     }
 
     private var recordingSection: some View {
-        ConfigurationSettingsGroup(
+        ConfigurationSection(
             "Recording",
             systemImage: "mic"
         ) {
@@ -56,13 +56,15 @@ struct ConfigurationGeneralView: View {
                 )
             }
 
-            Text(viewModel.audioInputPreferenceStatusMessage)
-                .font(.caption)
-                .foregroundStyle(
-                    viewModel.isAudioInputPreferenceAvailable
-                        ? Color.secondary
-                        : Color.orange
-                )
+            ConfigurationStatusLabel(
+                title: viewModel.audioInputPreferenceStatusMessage,
+                systemImage: viewModel.isAudioInputPreferenceAvailable
+                    ? "checkmark.circle"
+                    : "exclamationmark.triangle.fill",
+                style: viewModel.isAudioInputPreferenceAvailable
+                    ? .neutral
+                    : .attention
+            )
         }
     }
 
@@ -76,61 +78,43 @@ struct ConfigurationGeneralView: View {
     }
 
     private var permissionsSection: some View {
-        ConfigurationSettingsGroup(
+        ConfigurationSection(
             "Permissions",
             systemImage: "hand.raised"
         ) {
-            LabeledContent("Microphone") {
-                HStack(spacing: 10) {
-                    ConfigurationPermissionStatusLabel(
-                        title: microphoneStatusTitle,
-                        granted: viewModel.microphoneStatus == .granted
-                    )
-                    microphoneAction
-                }
+            ConfigurationPermissionRow(
+                title: "Microphone",
+                statusTitle: microphoneStatusTitle,
+                granted: viewModel.microphoneStatus == .granted,
+                detail: microphonePermissionExplanation
+            ) {
+                microphoneAction
             }
-
-            Text(microphonePermissionExplanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             Divider()
 
-            LabeledContent("Accessibility") {
-                HStack(spacing: 10) {
-                    ConfigurationPermissionStatusLabel(
-                        title: accessibilityStatusTitle,
-                        granted: viewModel.accessibilityStatus == .granted
-                    )
-                    accessibilityAction
-                }
+            ConfigurationPermissionRow(
+                title: "Accessibility",
+                statusTitle: accessibilityStatusTitle,
+                granted: viewModel.accessibilityStatus == .granted,
+                detail:
+                    "Enables automatic insertion. Clipboard delivery remains available without it."
+            ) {
+                accessibilityAction
             }
-
-            Text(
-                "Accessibility enables automatic insertion. Dictation remains available through the clipboard without it."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
             Divider()
 
-            LabeledContent("Speech Recognition") {
-                HStack(spacing: 10) {
-                    ConfigurationPermissionStatusLabel(
-                        title: speechRecognitionStatusTitle,
-                        granted:
-                            viewModel.speechRecognitionStatus
-                                == .granted
-                    )
-                    speechRecognitionAction
-                }
+            ConfigurationPermissionRow(
+                title: "Speech Recognition",
+                statusTitle: speechRecognitionStatusTitle,
+                granted:
+                    viewModel.speechRecognitionStatus == .granted,
+                detail:
+                    "Used only for Apple On-Device transcription; OpenAI does not request it."
+            ) {
+                speechRecognitionAction
             }
-
-            Text(
-                "Speech Recognition is used only for Apple On-Device transcription. It is not requested when OpenAI is used."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 
@@ -215,7 +199,7 @@ struct ConfigurationGeneralView: View {
     }
 
     private var shortcutSection: some View {
-        ConfigurationSettingsGroup(
+        ConfigurationSection(
             "Global Shortcut",
             systemImage: "keyboard"
         ) {
@@ -250,7 +234,7 @@ struct ConfigurationGeneralView: View {
     }
 
     private var feedbackSection: some View {
-        ConfigurationSettingsGroup(
+        ConfigurationSection(
             "Feedback",
             systemImage: "speaker.wave.2"
         ) {
@@ -262,7 +246,7 @@ struct ConfigurationGeneralView: View {
     }
 
     private var privacySection: some View {
-        ConfigurationSettingsGroup(
+        ConfigurationSection(
             "Data & Privacy",
             systemImage: "lock.shield"
         ) {
@@ -340,5 +324,47 @@ struct ConfigurationGeneralView: View {
         case .restricted:
             "Restricted"
         }
+    }
+}
+
+private struct ConfigurationPermissionRow<Action: View>: View {
+    let title: String
+    let statusTitle: String
+    let granted: Bool
+    let detail: String
+    private let action: Action
+
+    init(
+        title: String,
+        statusTitle: String,
+        granted: Bool,
+        detail: String,
+        @ViewBuilder action: () -> Action
+    ) {
+        self.title = title
+        self.statusTitle = statusTitle
+        self.granted = granted
+        self.detail = detail
+        self.action = action()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent(title) {
+                HStack(spacing: 10) {
+                    ConfigurationPermissionStatusLabel(
+                        title: statusTitle,
+                        granted: granted
+                    )
+                    action
+                        .fixedSize()
+                }
+            }
+
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -11,8 +11,8 @@ struct ConfigurationView: View {
                 ConfigurationSidebar(viewModel: viewModel)
                     .navigationSplitViewColumnWidth(
                         min: 170,
-                        ideal: 190,
-                        max: 230
+                        ideal: 184,
+                        max: 210
                     )
             } detail: {
                 ConfigurationDetail(viewModel: viewModel)
@@ -21,7 +21,7 @@ struct ConfigurationView: View {
             Divider()
             ConfigurationFooter(viewModel: viewModel)
         }
-        .frame(minWidth: 760, minHeight: 620)
+        .frame(minWidth: 720, minHeight: 540)
     }
 }
 
@@ -29,26 +29,31 @@ private struct ConfigurationAccessBanner: View {
     let viewModel: ConfigurationViewModel
 
     var body: some View {
-        if let explanation = viewModel.sessionAccessExplanation {
-            Label(explanation, systemImage: "lock.fill")
-                .font(.callout)
+        if let presentation {
+            Label(presentation.message, systemImage: presentation.systemImage)
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(.quaternary.opacity(0.5))
-        } else if viewModel.presentationMode == .transcriptionRepair {
-            Label(
-                "Repair only the transcription provider or model. The retained recording is not uploaded until Retry.",
-                systemImage: "wrench.and.screwdriver.fill"
-            )
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(.quaternary.opacity(0.5))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.quaternary.opacity(0.35))
+                .overlay(alignment: .bottom) {
+                    Divider()
+                }
         }
+    }
+
+    private var presentation: (message: String, systemImage: String)? {
+        if let explanation = viewModel.sessionAccessExplanation {
+            return (explanation, "lock.fill")
+        }
+        if viewModel.presentationMode == .transcriptionRepair {
+            return (
+                "Repair only the transcription provider or model. The retained recording is not uploaded until Retry.",
+                "wrench.and.screwdriver.fill"
+            )
+        }
+        return nil
     }
 }
 
@@ -160,30 +165,27 @@ private struct ConfigurationFooter: View {
     var body: some View {
         HStack(spacing: 12) {
             if let issue = viewModel.issues.first {
-                Label(
-                    issue.message,
-                    systemImage: "exclamationmark.circle.fill"
+                ConfigurationStatusLabel(
+                    title: issue.message,
+                    systemImage: "exclamationmark.circle.fill",
+                    style: .error
                 )
-                .font(.caption)
-                .foregroundStyle(.red)
                 .lineLimit(2)
             } else if let success = viewModel.successMessage {
-                Label(
-                    success,
-                    systemImage: "checkmark.circle.fill"
+                ConfigurationStatusLabel(
+                    title: success,
+                    systemImage: "checkmark.circle.fill",
+                    style: .success
                 )
-                .font(.caption)
-                .foregroundStyle(.green)
             } else {
-                Label(
-                    footerDetail,
-                    systemImage: "lock.shield"
+                ConfigurationStatusLabel(
+                    title: footerDetail,
+                    systemImage: "lock.shield",
+                    style: .neutral
                 )
-                .font(.caption)
-                .foregroundStyle(.secondary)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if viewModel.isValidating {
                 ProgressView()
@@ -204,10 +206,13 @@ private struct ConfigurationFooter: View {
                         _ = await viewModel.save()
                     }
                 }
+                .fixedSize()
                 .disabled(!viewModel.canSave)
             }
         }
-        .padding(18)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
     }
 
     private var footerDetail: String {

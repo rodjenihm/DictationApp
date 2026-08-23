@@ -9,10 +9,7 @@ struct ConfigurationTranscriptionView: View {
             title: "Transcription",
             detail: "Choose how completed recordings become text."
         ) {
-            ConfigurationSettingsGroup(
-                "Transcription",
-                systemImage: "waveform"
-            ) {
+            ConfigurationForm {
                 providerSelection
                 if
                     viewModel.hasModelSelection(
@@ -235,7 +232,7 @@ struct ConfigurationPostProcessingView: View {
             title: "Post-processing",
             detail: "Optionally clean punctuation and formatting."
         ) {
-            ConfigurationSettingsGroup(
+            ConfigurationSection(
                 "Transcript cleanup",
                 systemImage: "wand.and.stars"
             ) {

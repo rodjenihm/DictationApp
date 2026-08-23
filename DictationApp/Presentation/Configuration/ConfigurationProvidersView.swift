@@ -7,21 +7,29 @@ struct ConfigurationProvidersView: View {
         NavigationStack {
             ConfigurationPage(
                 title: "Providers",
-                detail:
-                    "Configure implemented providers and review their capabilities."
+                detail: "Configure providers and review where they process data."
             ) {
-                ForEach(viewModel.providerRegistry.settingsModules) {
-                    module in
-                    Button {
-                        viewModel.showProvider(module.id)
-                    } label: {
-                        ConfigurationProviderRow(module: module)
+                VStack(spacing: 8) {
+                    ForEach(viewModel.providerRegistry.settingsModules) {
+                        module in
+                        Button {
+                            viewModel.showProvider(module.id)
+                        } label: {
+                            ConfigurationProviderRow(module: module)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(
+                            module.descriptor.displayName
+                        )
+                        .accessibilityValue(
+                            providerAccessibilityValue(module)
+                        )
+                        .accessibilityHint(
+                            "Opens \(module.descriptor.displayName) settings."
+                        )
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint(
-                        "Opens \(module.descriptor.displayName) settings."
-                    )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationDestination(
                 item: $viewModel.selectedProviderDetail
@@ -33,6 +41,18 @@ struct ConfigurationProvidersView: View {
             }
         }
     }
+
+    private func providerAccessibilityValue(
+        _ module: AnyProviderSettingsModule
+    ) -> String {
+        let capabilities = module.descriptor.capabilities.keys
+            .sorted { $0.rawValue < $1.rawValue }
+            .map(\.displayName)
+            .joined(separator: ", ")
+        return "\(module.descriptor.displayName). "
+            + "\(module.readiness.state.settingsTitle). "
+            + "Capabilities: \(capabilities)."
+    }
 }
 
 private struct ConfigurationProviderDetailView: View {
@@ -41,38 +61,50 @@ private struct ConfigurationProviderDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Button("Providers", systemImage: "chevron.left") {
+                    viewModel.showProvidersList()
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .keyboardShortcut("[", modifiers: .command)
+                .help("Back to Providers")
+                .accessibilityLabel("Back to Providers")
+
                 if let descriptor = viewModel.descriptor(for: providerID) {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 10) {
                         Image(systemName: descriptor.systemImage)
-                            .font(.title)
+                            .font(.title2)
                             .foregroundStyle(.tint)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(descriptor.displayName)
-                                .font(.title2.weight(.semibold))
+                                .font(.title3.weight(.semibold))
                             Text(
                                 providerID == .appleOnDevice
                                     ? "On-device availability, permission, and language assets."
                                     : "Provider-specific connection and authentication settings."
                             )
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                         }
                     }
                 }
             }
-            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
 
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 20) {
                     if
                         let module =
                             viewModel.providerRegistry.settingsModule(
                                 for: providerID
                             )
                     {
-                        ConfigurationSettingsGroup(
+                        ConfigurationSection(
                             "Configuration",
                             systemImage:
                                 providerID == .appleOnDevice
@@ -91,7 +123,7 @@ private struct ConfigurationProviderDetailView: View {
                             }
                         }
 
-                        ConfigurationSettingsGroup(
+                        ConfigurationSection(
                             "Capabilities",
                             systemImage: "checklist"
                         ) {
@@ -130,8 +162,10 @@ private struct ConfigurationProviderDetailView: View {
                         }
                     }
                 }
+                .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 18)
             }
         }
     }
@@ -141,17 +175,17 @@ private struct ConfigurationProviderRow: View {
     @ObservedObject var module: AnyProviderSettingsModule
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: module.descriptor.systemImage)
-                .font(.title2)
+                .font(.title3)
                 .foregroundStyle(.tint)
-                .frame(width: 32)
+                .frame(width: 28)
 
-            VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(module.descriptor.displayName)
                     .font(.headline)
 
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     ForEach(
                         module.descriptor.capabilities.keys.sorted {
                             $0.rawValue < $1.rawValue
@@ -160,24 +194,28 @@ private struct ConfigurationProviderRow: View {
                     ) { capability in
                         Text(capability.displayName)
                             .font(.caption2)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
                             .background(.quaternary)
                             .clipShape(Capsule())
                     }
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 12)
 
             ConfigurationProviderStatus(readiness: module.readiness)
             Image(systemName: "chevron.right")
                 .foregroundStyle(.tertiary)
         }
-        .padding(16)
-        .background(.quaternary.opacity(0.35))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .contentShape(Rectangle())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.quaternary.opacity(0.28), in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.quaternary, lineWidth: 0.5)
+        }
+        .contentShape(.rect(cornerRadius: 8))
     }
 }
 
@@ -185,28 +223,11 @@ private struct ConfigurationProviderStatus: View {
     let readiness: ProviderReadiness
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .font(.caption)
-            .foregroundStyle(
-                readiness.state == .configured
-                    ? Color.green
-                    : Color.orange
-            )
-    }
-
-    private var title: String {
-        switch readiness.state {
-        case .configured:
-            "Configured"
-        case .setupRequired:
-            "Setup required"
-        case .attentionRequired:
-            "Attention required"
-        case .pendingValidation:
-            "Pending validation"
-        case .willDisconnect:
-            "Will be disconnected"
-        }
+        ConfigurationStatusLabel(
+            title: readiness.state.settingsTitle,
+            systemImage: systemImage,
+            style: style
+        )
     }
 
     private var systemImage: String {
@@ -219,6 +240,37 @@ private struct ConfigurationProviderStatus: View {
             "minus.circle.fill"
         case .setupRequired, .attentionRequired:
             "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var style: ConfigurationStatusStyle {
+        switch readiness.state {
+        case .configured:
+            .success
+        case .pendingValidation:
+            .pending
+        case
+            .setupRequired,
+            .attentionRequired,
+            .willDisconnect:
+            .attention
+        }
+    }
+}
+
+private extension ProviderReadinessState {
+    var settingsTitle: String {
+        switch self {
+        case .configured:
+            "Configured"
+        case .setupRequired:
+            "Setup required"
+        case .attentionRequired:
+            "Attention required"
+        case .pendingValidation:
+            "Pending validation"
+        case .willDisconnect:
+            "Will be disconnected"
         }
     }
 }
