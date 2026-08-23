@@ -297,6 +297,14 @@ Verified:
 - Focused targets were resolved at the AX call rather than retained from recording start; no application, caret, selected range, transcript, or clipboard snapshot was persisted or logged.
 - Existing provider configuration, Keychain credential, shortcut, permissions, and sound-cue preference were not modified, and no OpenAI request was made during Slice 9 verification.
 
+2026-08-23 follow-up:
+
+- Made insertion confirmation tolerate ordinary/non-breaking-space normalization in rich-text Accessibility values and retry delayed readback for a bounded 200-millisecond window, without posting another paste or weakening comparisons for other characters and whitespace.
+- Added inserted-range readback and collapsed-caret advancement as independent confirmation signals for rich-text editors whose whole-field Accessibility value differs after a successful paste.
+- Live privacy-safe logs showed exact confirmation in an empty chat-style `contenteditable` target and a whole-value mismatch when appending to existing content, isolating the remaining false Unverified path without inspecting or logging text.
+- Signed arm64 Debug and Release builds succeeded with the updated verification behavior.
+- A rebuilt Xcode Debug app confirmed one empty-composer insertion through whole-value readback and four consecutive append insertions through inserted-range readback; every attempt restored the owned clipboard snapshot without showing Unverified.
+
 ### Slice 10 — Cross-stage cancellation and state-machine hardening
 
 Implemented:

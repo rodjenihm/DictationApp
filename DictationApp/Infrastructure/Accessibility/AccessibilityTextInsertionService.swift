@@ -6,6 +6,8 @@ import OSLog
 @MainActor
 final class AccessibilityTextInsertionService: TextInsertionServicing {
     private let pasteConsumptionDelay = Duration.milliseconds(200)
+    private let pasteVerificationRetryDelay = Duration.milliseconds(100)
+    private let pasteVerificationAttemptCount = 3
     private let clipboardRestorationDelay = Duration.milliseconds(250)
 
     func insert(
@@ -162,8 +164,14 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         clipboardTransaction.holdRestoration(
             for: clipboardRestorationDelay
         )
+        let isConfirmed: Bool
         do {
-            try await waitForPasteConsumption()
+            isConfirmed = try await confirmInsertion(
+                expectedValue: expectedValue,
+                selectedRange: selectedRange,
+                insertedText: insertedText,
+                in: focusedElement
+            )
         } catch is CancellationError {
             AppLog.insertion.notice(
                 "Insertion verification cancelled after paste dispatch"
@@ -177,27 +185,18 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             return .failed
         }
 
-        let actualValue = stringAttribute(
-            kAXValueAttribute,
-            from: focusedElement
-        )
-
-        guard !Task.isCancelled else {
-            return .failed
-        }
-
         if insertedText != text {
             _ = clipboardTransaction.replaceOwnedContents(with: text)
         }
 
-        guard let expectedValue else {
+        guard expectedValue != nil else {
             AppLog.insertion.info(
                 "Insertion completed without a verifiable target value"
             )
             return .unverified
         }
 
-        if actualValue == expectedValue {
+        if isConfirmed {
             AppLog.insertion.info("Insertion confirmed")
             return .confirmed
         }
@@ -241,8 +240,135 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         return true
     }
 
-    private func waitForPasteConsumption() async throws {
+    private func confirmInsertion(
+        expectedValue: String?,
+        selectedRange: NSRange?,
+        insertedText: String,
+        in focusedElement: AXUIElement
+    ) async throws -> Bool {
         try await Task.sleep(for: pasteConsumptionDelay)
+
+        for attempt in 0..<pasteVerificationAttemptCount {
+            try Task.checkCancellation()
+
+            let actualValue = stringAttribute(
+                kAXValueAttribute,
+                from: focusedElement
+            )
+            if
+                let expectedValue,
+                valuesMatchForVerification(
+                    actualValue,
+                    expectedValue: expectedValue
+                )
+            {
+                return true
+            }
+
+            if
+                let insertedRange = insertedTextRange(
+                    from: selectedRange,
+                    insertedText: insertedText
+                ),
+                valuesMatchForVerification(
+                    stringForRange(
+                        insertedRange,
+                        from: focusedElement
+                    ),
+                    expectedValue: insertedText
+                )
+            {
+                AppLog.insertion.info(
+                    "Insertion confirmed from inserted-range readback"
+                )
+                return true
+            }
+
+            let actualSelectedRange = selectedTextRange(
+                from: focusedElement
+            )
+            if caretConfirmsInsertion(
+                from: selectedRange,
+                to: actualSelectedRange,
+                insertedText: insertedText
+            ) {
+                AppLog.insertion.info(
+                    "Insertion confirmed from caret advancement"
+                )
+                return true
+            }
+
+            guard attempt + 1 < pasteVerificationAttemptCount else {
+                break
+            }
+            try await Task.sleep(for: pasteVerificationRetryDelay)
+        }
+
+        return false
+    }
+
+    private func insertedTextRange(
+        from originalRange: NSRange?,
+        insertedText: String
+    ) -> NSRange? {
+        guard
+            let originalRange,
+            originalRange.location >= 0,
+            originalRange.location != NSNotFound,
+            !insertedText.isEmpty,
+            insertedText.utf16.count
+                <= Int.max - originalRange.location
+        else {
+            return nil
+        }
+
+        return NSRange(
+            location: originalRange.location,
+            length: insertedText.utf16.count
+        )
+    }
+
+    private func caretConfirmsInsertion(
+        from originalRange: NSRange?,
+        to actualRange: NSRange?,
+        insertedText: String
+    ) -> Bool {
+        guard
+            let originalRange,
+            let actualRange,
+            originalRange.location >= 0,
+            originalRange.location != NSNotFound,
+            actualRange.location >= 0,
+            actualRange.length == 0,
+            !insertedText.isEmpty,
+            insertedText.utf16.count
+                <= Int.max - originalRange.location
+        else {
+            return false
+        }
+
+        return actualRange.location
+            == originalRange.location + insertedText.utf16.count
+    }
+
+    private func valuesMatchForVerification(
+        _ actualValue: String?,
+        expectedValue: String
+    ) -> Bool {
+        guard let actualValue else {
+            return false
+        }
+
+        if actualValue == expectedValue {
+            return true
+        }
+
+        return normalizeEditorSpaces(in: actualValue)
+            == normalizeEditorSpaces(in: expectedValue)
+    }
+
+    private func normalizeEditorSpaces(in value: String) -> String {
+        value.replacingOccurrences(of: "\u{00A0}", with: " ")
     }
 
     private func focusedElement(
@@ -372,5 +498,32 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         return NSRange(location: range.location, length: range.length)
+    }
+
+    private func stringForRange(
+        _ range: NSRange,
+        from element: AXUIElement
+    ) -> String? {
+        var cfRange = CFRange(
+            location: range.location,
+            length: range.length
+        )
+        guard let rangeValue = AXValueCreate(.cfRange, &cfRange) else {
+            return nil
+        }
+
+        var value: CFTypeRef?
+        guard
+            AXUIElementCopyParameterizedAttributeValue(
+                element,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                rangeValue,
+                &value
+            ) == .success
+        else {
+            return nil
+        }
+
+        return value as? String
     }
 }

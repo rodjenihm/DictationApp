@@ -70,7 +70,7 @@ Escape must be intercepted only while a dictation session is active. A handled c
 - If no writable text element is focused, preserve the transcript on the clipboard and show a manual-paste fallback.
 - Before replacing the clipboard, make a best-effort in-memory snapshot of its materialized items and data types.
 - Model automatic insertion as one of three outcomes: Confirmed, Unverified, or Failed.
-- **Confirmed:** restore the clipboard snapshot only if the clipboard change count shows that the app still owns the clipboard.
+- **Confirmed:** restore the clipboard snapshot only if the clipboard change count shows that the app still owns the clipboard. Verification may retry Accessibility readback for a brief bounded window. Confirm when the exposed whole value or inserted range matches after treating ordinary and non-breaking spaces as equivalent, or when an exposed selection collapses and its caret advances by the inserted UTF-16 length. Do not normalize other characters or whitespace and do not post a second paste.
 - **Unverified:** the insertion attempt may have succeeded, but the target does not expose enough state to prove it. Leave the final transcript on the clipboard and briefly indicate that it remains available there.
 - **Failed:** leave the final transcript on the clipboard and show the manual-paste fallback.
 - If the user or another application changes the clipboard after the app writes the transcript, do not restore the snapshot or overwrite the newer contents.
