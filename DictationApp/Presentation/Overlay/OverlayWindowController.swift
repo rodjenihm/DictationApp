@@ -68,8 +68,8 @@ final class OverlayWindowController {
         let fittingSize = hostingController.view.fittingSize
         panel.setContentSize(
             NSSize(
-                width: max(500, fittingSize.width),
-                height: max(64, fittingSize.height)
+                width: ceil(max(1, fittingSize.width)),
+                height: ceil(max(1, fittingSize.height))
             )
         )
         position(panel, on: sessionScreen)

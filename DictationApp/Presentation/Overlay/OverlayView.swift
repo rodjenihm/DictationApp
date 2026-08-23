@@ -11,95 +11,204 @@ struct OverlayView: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
+        presentationContent
+            .background(.regularMaterial, in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+            }
+            .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
+            .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var presentationContent: some View {
+        if usesAttentionPresentation {
+            attentionContent
+        } else {
+            compactContent
+        }
+    }
+
+    private var compactContent: some View {
+        HStack(spacing: 8) {
+            stateIndicator
+
+            Text(compactTitle)
+                .font(
+                    .system(
+                        .callout,
+                        design: .rounded,
+                        weight: .semibold
+                    )
+                )
+                .foregroundStyle(compactTitleColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            compactControls
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(maxWidth: 360)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var attentionContent: some View {
+        HStack(spacing: 12) {
             stateIndicator
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .font(
+                        .system(
+                            .body,
+                            design: .rounded,
+                            weight: .semibold
+                        )
+                    )
                     .lineLimit(1)
 
                 if let detail {
                     Text(detail)
                         .font(.system(.caption, design: .rounded))
                         .foregroundStyle(detailColor)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if case .recording = state {
-                Button("Stop", action: onStop)
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .focusable(false)
-            }
+            attentionControls
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(
+            minWidth: 440,
+            idealWidth: attentionIdealWidth,
+            maxWidth: 520
+        )
+    }
 
-            switch state {
-            case .transcriptionFailed(_, let canRepair):
-                if canRepair {
-                    Button(
-                        "Settings",
-                        action: onRepairTranscription
-                    )
-                    .buttonStyle(.bordered)
-                    .focusable(false)
-                }
+    @ViewBuilder
+    private var compactControls: some View {
+        switch state {
+        case .recording:
+            compactStopButton
+            compactCancelButton
+        case
+            .preparing,
+            .finalizing,
+            .completed,
+            .transcribing,
+            .postProcessing,
+            .inserting,
+            .tooShort:
+            compactCancelButton
+        case
+            .inserted,
+            .rawTranscriptFallback,
+            .noSpeech,
+            .cancelled,
+            .insertionUnverified,
+            .clipboardFallback,
+            .transcriptionFailed,
+            .captureFailed,
+            .failed:
+            EmptyView()
+        }
+    }
 
-                Button("Retry", action: onRetry)
-                    .buttonStyle(.borderedProminent)
-                    .focusable(false)
+    private var compactStopButton: some View {
+        Button(action: onStop) {
+            Label("Stop dictation", systemImage: "stop.fill")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.circle)
+        .controlSize(.small)
+        .tint(.red)
+        .focusable(false)
+        .accessibilityLabel("Stop dictation")
+        .help("Stop dictation")
+    }
 
+    private var compactCancelButton: some View {
+        Button(role: .cancel, action: onCancel) {
+            Label("Cancel dictation", systemImage: "xmark")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.circle)
+        .controlSize(.small)
+        .focusable(false)
+        .accessibilityLabel("Cancel dictation")
+        .help("Cancel dictation")
+    }
+
+    @ViewBuilder
+    private var attentionControls: some View {
+        switch state {
+        case .transcriptionFailed(_, let canRepair):
+            if canRepair {
                 Button(
-                    "Discard",
-                    role: .destructive,
-                    action: onDiscard
+                    "Settings",
+                    action: onRepairTranscription
                 )
                 .buttonStyle(.bordered)
                 .focusable(false)
-            case .captureFailed:
-                Button(
-                    "Transcribe Partial",
-                    action: onTranscribePartial
-                )
+            }
+
+            Button("Retry", action: onRetry)
                 .buttonStyle(.borderedProminent)
                 .focusable(false)
 
-                Button(
-                    "Discard",
-                    role: .destructive,
-                    action: onCancel
-                )
+            Button(
+                "Discard",
+                role: .destructive,
+                action: onDiscard
+            )
+            .buttonStyle(.bordered)
+            .focusable(false)
+        case .captureFailed:
+            Button(
+                "Transcribe Partial",
+                action: onTranscribePartial
+            )
+            .buttonStyle(.borderedProminent)
+            .focusable(false)
+
+            Button(
+                "Discard",
+                role: .destructive,
+                action: onCancel
+            )
+            .buttonStyle(.bordered)
+            .focusable(false)
+        case
+            .insertionUnverified,
+            .clipboardFallback:
+            Button("Dismiss", action: onDismiss)
                 .buttonStyle(.bordered)
                 .focusable(false)
-            case
-                .insertionUnverified,
-                .clipboardFallback:
-                Button("Dismiss", action: onDismiss)
-                    .buttonStyle(.bordered)
-                    .focusable(false)
-            case
-                .inserted,
-                .rawTranscriptFallback,
-                .noSpeech:
-                EmptyView()
-            default:
-                Button("Cancel", role: .cancel, action: onCancel)
-                    .buttonStyle(.bordered)
-                    .focusable(false)
-            }
+        case .failed:
+            Button("Cancel", role: .cancel, action: onCancel)
+                .buttonStyle(.bordered)
+                .focusable(false)
+        case
+            .preparing,
+            .recording,
+            .finalizing,
+            .completed,
+            .transcribing,
+            .postProcessing,
+            .inserting,
+            .inserted,
+            .rawTranscriptFallback,
+            .noSpeech,
+            .tooShort,
+            .cancelled:
+            EmptyView()
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 12)
-        .frame(width: overlayWidth)
-        .background(.regularMaterial, in: Capsule())
-        .overlay {
-            Capsule()
-                .strokeBorder(.white.opacity(0.18))
-        }
-        .shadow(color: .black.opacity(0.24), radius: 16, y: 6)
-        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -108,13 +217,13 @@ struct OverlayView: View {
         case .recording:
             Circle()
                 .fill(.red)
-                .frame(width: 12, height: 12)
-                .shadow(color: .red.opacity(0.6), radius: 4)
+                .frame(width: 8, height: 8)
+                .shadow(color: .red.opacity(0.45), radius: 2)
                 .accessibilityLabel("Recording")
         case .completed, .inserted:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .font(.title3)
+                .font(.body)
                 .accessibilityHidden(true)
         case
             .rawTranscriptFallback,
@@ -122,12 +231,12 @@ struct OverlayView: View {
             .clipboardFallback:
             Image(systemName: "text.badge.exclamationmark")
                 .foregroundStyle(.orange)
-                .font(.title3)
+                .font(.body)
                 .accessibilityHidden(true)
         case .noSpeech:
             Image(systemName: "waveform.slash")
                 .foregroundStyle(.secondary)
-                .font(.title3)
+                .font(.body)
                 .accessibilityHidden(true)
         case
             .tooShort,
@@ -136,12 +245,12 @@ struct OverlayView: View {
             .captureFailed:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-                .font(.title3)
+                .font(.body)
                 .accessibilityHidden(true)
         case .cancelled:
             Image(systemName: "xmark.circle.fill")
                 .foregroundStyle(.secondary)
-                .font(.title3)
+                .font(.body)
                 .accessibilityHidden(true)
         case
             .preparing,
@@ -150,8 +259,107 @@ struct OverlayView: View {
             .postProcessing,
             .inserting:
             ProgressView()
-                .controlSize(.small)
+                .controlSize(.mini)
                 .accessibilityLabel("Working")
+        }
+    }
+
+    private var usesAttentionPresentation: Bool {
+        switch state {
+        case
+            .insertionUnverified,
+            .clipboardFallback,
+            .transcriptionFailed,
+            .captureFailed,
+            .failed:
+            true
+        case
+            .preparing,
+            .recording,
+            .finalizing,
+            .completed,
+            .transcribing,
+            .postProcessing,
+            .inserting,
+            .inserted,
+            .rawTranscriptFallback,
+            .noSpeech,
+            .tooShort,
+            .cancelled:
+            false
+        }
+    }
+
+    private var compactTitle: String {
+        switch state {
+        case .preparing:
+            "Starting…"
+        case .recording(
+            let elapsed,
+            let inputDeviceName,
+            let isUsingFallback,
+            let isNearDurationLimit
+        ):
+            compactRecordingTitle(
+                elapsed: elapsed,
+                inputDeviceName: inputDeviceName,
+                isUsingFallback: isUsingFallback,
+                isNearDurationLimit: isNearDurationLimit
+            )
+        case .finalizing(let reason):
+            switch reason {
+            case .stopped:
+                "Finalizing…"
+            case .automaticLimit:
+                "Limit reached · Finalizing…"
+            case .cancelled:
+                "Cancelling…"
+            }
+        case .completed(let duration):
+            "Captured locally · \(formatDuration(duration))"
+        case .transcribing:
+            "Transcribing…"
+        case .postProcessing:
+            "Cleaning up…"
+        case .inserting:
+            "Inserting…"
+        case .inserted:
+            "Transcript inserted"
+        case .rawTranscriptFallback:
+            "Cleanup unavailable · Raw text inserted"
+        case .noSpeech:
+            "No speech detected"
+        case .tooShort:
+            "Recording too short"
+        case .cancelled:
+            "Recording cancelled"
+        case
+            .insertionUnverified,
+            .clipboardFallback,
+            .transcriptionFailed,
+            .captureFailed,
+            .failed:
+            title
+        }
+    }
+
+    private var compactTitleColor: Color {
+        switch state {
+        case
+            .rawTranscriptFallback,
+            .tooShort:
+            .orange
+        case .recording(
+            _,
+            _,
+            let isUsingFallback,
+            let isNearDurationLimit
+        ):
+            isUsingFallback || isNearDurationLimit ? .orange : .primary
+        case .noSpeech, .cancelled:
+            .secondary
+        default:
+            .primary
         }
     }
 
@@ -203,46 +411,29 @@ struct OverlayView: View {
 
     private var detail: String? {
         switch state {
-        case .recording(
-            _,
-            let inputDeviceName,
-            let isUsingFallback,
-            let isNearDurationLimit
-        ):
-            recordingDetail(
-                inputDeviceName: inputDeviceName,
-                isUsingFallback: isUsingFallback,
-                isNearDurationLimit: isNearDurationLimit
-            )
-        case .finalizing(.automaticLimit):
-            "Finalizing the captured audio"
-        case .completed:
-            "Audio remains local until transcription begins"
-        case .transcribing(let providerName):
-            "Uploading completed audio to \(providerName)"
-        case .postProcessing(let providerName):
-            "Sending the raw transcript to \(providerName)"
-        case .inserting:
-            "Resolving the currently focused text element"
-        case .inserted:
-            "The previous clipboard contents were restored when possible"
         case .insertionUnverified(let message):
             message
         case .clipboardFallback(let message):
             message
-        case .rawTranscriptFallback(let message):
-            message
-        case .noSpeech:
-            "The clipboard was left unchanged"
         case .transcriptionFailed(let message, _):
             message
         case .captureFailed(let message, _):
             message
-        case .tooShort:
-            "Record for at least half a second"
         case .failed(let message):
             message
-        case .preparing, .finalizing, .cancelled:
+        case
+            .preparing,
+            .recording,
+            .finalizing,
+            .completed,
+            .transcribing,
+            .postProcessing,
+            .inserting,
+            .inserted,
+            .rawTranscriptFallback,
+            .noSpeech,
+            .tooShort,
+            .cancelled:
             nil
         }
     }
@@ -250,32 +441,45 @@ struct OverlayView: View {
     private var detailColor: Color {
         switch state {
         case
-            .tooShort,
-            .failed,
+            .insertionUnverified,
+            .clipboardFallback,
             .transcriptionFailed,
             .captureFailed,
-            .rawTranscriptFallback,
-            .insertionUnverified,
-            .clipboardFallback:
+            .failed:
             .orange
-        case .recording(_, _, let isUsingFallback, let isNearDurationLimit):
-            isUsingFallback || isNearDurationLimit ? .orange : .secondary
         default:
             .secondary
         }
     }
 
-    private var overlayWidth: CGFloat {
+    private var attentionIdealWidth: CGFloat {
         switch state {
-        case .transcriptionFailed(_, true):
-            640
-        case .captureFailed:
-            600
-        case .insertionUnverified, .clipboardFallback:
-            620
+        case .transcriptionFailed(_, true), .captureFailed:
+            520
+        case
+            .transcriptionFailed,
+            .insertionUnverified,
+            .clipboardFallback:
+            480
         default:
-            500
+            440
         }
+    }
+
+    private func compactRecordingTitle(
+        elapsed: TimeInterval,
+        inputDeviceName: String,
+        isUsingFallback: Bool,
+        isNearDurationLimit: Bool
+    ) -> String {
+        var components = ["Recording \(formatDuration(elapsed))"]
+        if isUsingFallback {
+            components.append("\(inputDeviceName) fallback")
+        }
+        if isNearDurationLimit {
+            components.append("Limit soon")
+        }
+        return components.joined(separator: " · ")
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {
@@ -285,20 +489,5 @@ struct OverlayView: View {
             totalSeconds / 60,
             totalSeconds % 60
         )
-    }
-
-    private func recordingDetail(
-        inputDeviceName: String,
-        isUsingFallback: Bool,
-        isNearDurationLimit: Bool
-    ) -> String {
-        var components = [inputDeviceName]
-        if isUsingFallback {
-            components.append("preferred microphone unavailable")
-        }
-        if isNearDurationLimit {
-            components.append("recording limit soon")
-        }
-        return components.joined(separator: " — ")
     }
 }

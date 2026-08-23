@@ -334,7 +334,12 @@ Permission behavior:
 
 ## Recording and progress overlay
 
-Show a compact pill-shaped overlay at the bottom center of the active display. Treat exact dimensions, spacing, and animation as implementation details to refine through use.
+Show a compact pill-shaped overlay at the bottom center of the active display.
+Routine progress and non-actionable transient outcomes use a content-fitting,
+single-line presentation. Failures and clipboard recovery use a wider,
+multi-line attention presentation when their detail or actions determine the
+user's next step. The detailed presentation contract is defined in
+`docs/specifications/v1/features/06-compact-transcription-overlay.md`.
 
 The overlay must:
 
@@ -343,14 +348,21 @@ The overlay must:
 - Remain visible as the session moves from recording through transcription, optional post-processing, and insertion.
 - Keep Cancel available until insertion completes.
 - Allow its controls to be clicked without taking keyboard focus.
+- Change state and size without transition or window animation.
 
 State-specific content:
 
-- **Recording:** red recording indicator, elapsed time, Stop, and Cancel.
-- **Transcribing:** progress indicator and a concise transcription status.
-- **Post-processing:** progress indicator and a concise cleanup status.
-- **Success:** brief confirmation, then dismiss automatically.
-- **Raw fallback:** briefly indicate that cleanup was unavailable and the raw transcript was inserted.
+- **Recording:** red recording indicator, elapsed time, and compact symbol Stop
+  and Cancel controls. Omit the ordinary input name; identify the actual input
+  when microphone fallback requires attention.
+- **Transcribing:** progress indicator and a concise transcription status
+  without provider detail.
+- **Post-processing:** progress indicator and a concise cleanup status without
+  provider detail.
+- **Success:** show no visible confirmation, post a nonvisual accessibility
+  announcement, and return directly to Ready.
+- **Raw fallback:** briefly show a compact warning that cleanup was unavailable
+  and the raw transcript was inserted.
 - **Clipboard fallback:** explain that automatic insertion was unavailable and the transcript is ready to paste from the clipboard.
 - **Recoverable capture failure:** show Transcribe Partial and Discard.
 - **Transcription failure:** show the actionable Retry and Discard choices.
@@ -418,7 +430,8 @@ Input-device behavior:
 
 - Resolve the saved microphone preference at the start of every recording.
 - Provide System Default and specific-device choices in General Settings.
-- Display the active input device name in the recording overlay.
+- Display the active input device name in the menu. Show it in the recording
+  overlay only when preferred-device fallback requires attention.
 - Keep the saved preference independent from the macOS system default.
 - If no input device is available before capture starts, show an actionable capture error and return to idle.
 - If the input device becomes unavailable or capture fails while recording, stop capture and attempt to finalize the partial M4A.

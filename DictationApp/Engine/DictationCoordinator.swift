@@ -999,10 +999,6 @@ final class DictationCoordinator: ObservableObject {
                 else {
                     throw CancellationError()
                 }
-                try await sleep(
-                    for: TerminalDisplayDuration.success,
-                    token: token
-                )
             }
 
         case .unverified:
@@ -1589,7 +1585,6 @@ private extension SessionStateKind {
 }
 
 private enum TerminalDisplayDuration {
-    static let success: TimeInterval = 1.2
     static let noSpeech: TimeInterval = 2
     static let rawFallback: TimeInterval = 2.5
     static let clipboardFallback: TimeInterval = 6

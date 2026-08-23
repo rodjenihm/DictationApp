@@ -351,6 +351,30 @@ Verified:
 - Existing Slice 1–10 evidence remains applicable to untouched first-run, configuration repair, model/language, provider retry/fallback, duration, partial capture, multi-display, insertion, clipboard-race, and cross-stage cancellation behavior.
 - Repository checks found no Derived Data, build directories, result bundles, temporary probes, recordings, transcripts, or credential-like API-key values; the bundled silent validation fixture is the only tracked M4A.
 
+2026-08-23 compact-overlay follow-up:
+
+- Replaced the fixed 500-to-640-point overlay with content-fitting compact and
+  attention presentations. Routine recording measured 174 by 31 points,
+  transcribing 146 by 31, combined microphone/duration warning 360 by 31,
+  clipboard fallback 480 by 64, and repairable transcription failure 520 by
+  64 in a temporary AppKit-hosted SwiftUI rendering probe.
+- Reduced routine copy, spacing, indicator size, border contrast, and shadow;
+  added symbol Stop/Cancel controls with accessibility labels and hover help;
+  retained labeled recovery actions and full actionable detail.
+- Removed the ordinary 1.2-second confirmed-insertion display delay, dismissed
+  the overlay immediately, refreshed Ready presentation, and added a nonvisual
+  macOS accessibility announcement. The distinct 2.5-second raw-cleanup
+  fallback warning remains.
+- Updated the base and microphone-selection specifications so routine overlay
+  content omits provider and input detail while the menu retains it; microphone
+  fallback still identifies the actual input in the overlay.
+- Normally signed arm64 Debug and Release builds succeeded, both bundles passed
+  strict deep code-signature verification, and `git diff --check`, changed-path
+  scope review, and changed-source logging/privacy review passed.
+- Live provider-backed insertion and spoken VoiceOver output were not repeated;
+  their changed paths were verified through rendering, source inspection, and
+  both build configurations.
+
 Verification limitations:
 
 - Runtime compatibility on an actual macOS 15 Apple Silicon Mac or VM remains unavailable; binary targeting and build compatibility were verified on the current macOS 26.5 Apple Silicon host.
@@ -369,4 +393,5 @@ Verification limitations:
 
 ## Next action
 
-The **v1 implementation is complete and awaiting review**.
+The **v1 implementation and compact-overlay follow-up are complete and awaiting
+review**.

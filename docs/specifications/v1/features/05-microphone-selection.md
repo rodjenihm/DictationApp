@@ -19,6 +19,8 @@ This specification supersedes the default-input and no-picker requirements in
 `docs/specifications/v1/application.md`,
 `docs/specifications/v1/features/01-tabbed-settings.md`, and
 `docs/specifications/v1/features/04-recording-startup-performance.md`.
+`docs/specifications/v1/features/06-compact-transcription-overlay.md` further
+refines the active-overlay presentation defined here.
 
 ## Motivation
 
@@ -45,7 +47,8 @@ external microphones, virtual devices, and explicit user control.
   when the device returns.
 - Fall back once to the current system default when a preferred device is
   missing or cannot be configured before capture.
-- Show the actual capture device and fallback state during recording.
+- Show the actual capture device in the menu during recording and surface the
+  actual fallback device in the overlay when fallback requires attention.
 - Preserve cancellation, partial-capture recovery, artifact ownership, and
   immutable session behavior.
 
@@ -154,9 +157,10 @@ buffers or the writer.
   session.
 - Keep the session pinned to the starting device even if the system default
   changes.
-- Show the actual input name in the menu and overlay.
-- When fallback is active, append a non-blocking “preferred microphone
-  unavailable” indication.
+- Show the actual input name in the menu throughout recording.
+- When fallback is active, identify the actual fallback input and the
+  non-blocking “preferred microphone unavailable” condition in the compact
+  overlay.
 - Never switch to another device within the active recording.
 - If the active device disconnects or the input unit fails after capture
   starts, stop, attempt partial finalization, and offer Transcribe Partial or

@@ -496,11 +496,9 @@ final class AppModel: ObservableObject {
             overlayWindowController.present(.inserting)
         case .inserted:
             shortcutService.unregisterSessionCancellationShortcut()
-            statusText = "Transcript inserted"
-            primaryActionTitle = "Start Dictation"
-            isPrimaryActionEnabled = false
-            canCancel = false
-            overlayWindowController.present(.inserted)
+            overlayWindowController.dismiss()
+            refreshStatus(force: true)
+            announceAccessibility("Transcript inserted")
         case .insertionUnverified(let message):
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = message
@@ -594,6 +592,17 @@ final class AppModel: ObservableObject {
             format: "%d:%02d",
             totalSeconds / 60,
             totalSeconds % 60
+        )
+    }
+
+    private func announceAccessibility(_ message: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: message,
+                .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+            ]
         )
     }
 
