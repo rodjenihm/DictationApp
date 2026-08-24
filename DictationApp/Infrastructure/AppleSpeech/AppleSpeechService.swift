@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import OSLog
 import Speech
 
 enum AppleSpeechAvailability: Equatable, Sendable {
@@ -59,7 +60,7 @@ enum AppleSpeechServiceError: LocalizedError, Sendable {
         case .installationFailed:
             "The Apple transcription language asset could not be installed."
         case .temporarilyUnavailable:
-            "Apple On-Device transcription is temporarily unavailable."
+            "Apple Speech is temporarily unavailable. Try again. If the problem persists, quit and reopen DictationApp."
         case .analysisFailed:
             "Apple On-Device could not transcribe the recording."
         }
@@ -161,21 +162,7 @@ final class AppleSpeechService {
             throw AppleSpeechServiceError.unsupportedLocale
         }
 
-        let reserved: Bool
-        do {
-            reserved = try await AssetInventory.reserve(locale: locale)
-        } catch {
-            throw AppleSpeechServiceError.reservationUnavailable
-        }
-        let existingReservation =
-            await AssetInventory.reservedLocales.contains(
-                where: { $0.identifier == locale.identifier }
-            )
-        guard
-            reserved || existingReservation
-        else {
-            throw AppleSpeechServiceError.reservationUnavailable
-        }
+        try await ensureAssetReservation(for: locale)
 
         let transcriber = SpeechTranscriber(
             locale: locale,
@@ -189,44 +176,33 @@ final class AppleSpeechService {
             return
         }
 
-        do {
-            guard
-                let request =
-                    try await AssetInventory
-                        .assetInstallationRequest(
-                            supporting: [transcriber]
-                        )
-            else {
-                guard
-                    await AssetInventory.status(
-                        forModules: [transcriber]
-                    ) == .installed
-                else {
+        for attempt in 1...2 {
+            do {
+                try await downloadAsset(
+                    supporting: transcriber,
+                    progressHandler: progressHandler
+                )
+                return
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as AppleSpeechServiceError {
+                throw error
+            } catch {
+                logFrameworkFailure(
+                    error,
+                    operation: "asset installation"
+                )
+                guard isXPCConnectionFailure(error) else {
                     throw AppleSpeechServiceError.installationFailed
                 }
-                progressHandler(1)
-                return
-            }
-
-            let progress = request.progress
-            let monitor = Task {
-                while !Task.isCancelled {
-                    progressHandler(progress.fractionCompleted)
-                    try? await Task.sleep(for: .milliseconds(150))
+                guard attempt == 1 else {
+                    throw AppleSpeechServiceError.temporarilyUnavailable
                 }
+                AppLog.providers.notice(
+                    "Apple Speech service connection failed; retrying asset installation"
+                )
+                try await Task.sleep(for: .milliseconds(500))
             }
-            defer {
-                monitor.cancel()
-            }
-
-            try await request.downloadAndInstall()
-            progressHandler(1)
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch let error as AppleSpeechServiceError {
-            throw error
-        } catch {
-            throw AppleSpeechServiceError.installationFailed
         }
     }
 
@@ -236,11 +212,11 @@ final class AppleSpeechService {
         guard #available(macOS 26.0, *) else {
             return
         }
+        let requestedLocale = Locale(identifier: localeIdentifier)
         guard
-            let reservedLocale =
-                await AssetInventory.reservedLocales.first(
-                    where: { $0.identifier == localeIdentifier }
-                )
+            let reservedLocale = await AssetInventory.reservedLocales.first(
+                where: { assetLocale($0, matches: requestedLocale) }
+            )
         else {
             return
         }
@@ -323,6 +299,160 @@ final class AppleSpeechService {
             }
             throw AppleSpeechServiceError.analysisFailed
         }
+    }
+
+    @available(macOS 26.0, *)
+    private func ensureAssetReservation(
+        for locale: Locale
+    ) async throws {
+        for attempt in 1...2 {
+            try Task.checkCancellation()
+
+            let existingReservations = await AssetInventory.reservedLocales
+            if existingReservations.contains(
+                where: { assetLocale($0, matches: locale) }
+            ) {
+                return
+            }
+            if
+                existingReservations.count
+                    >= AssetInventory.maximumReservedLocales
+            {
+                AppLog.providers.notice(
+                    "Apple Speech asset reservation capacity reached"
+                )
+                throw AppleSpeechServiceError.reservationUnavailable
+            }
+
+            do {
+                if try await AssetInventory.reserve(locale: locale) {
+                    return
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                logFrameworkFailure(
+                    error,
+                    operation: "asset reservation"
+                )
+                let updatedReservations =
+                    await AssetInventory.reservedLocales
+                if updatedReservations.contains(
+                    where: { assetLocale($0, matches: locale) }
+                ) {
+                    return
+                }
+                if
+                    updatedReservations.count
+                        >= AssetInventory.maximumReservedLocales
+                {
+                    throw AppleSpeechServiceError.reservationUnavailable
+                }
+                guard attempt == 1 else {
+                    throw AppleSpeechServiceError.temporarilyUnavailable
+                }
+                AppLog.providers.notice(
+                    "Apple Speech service failed to reserve an asset; retrying"
+                )
+                try await Task.sleep(for: .milliseconds(500))
+                continue
+            }
+
+            let updatedReservations = await AssetInventory.reservedLocales
+            if updatedReservations.contains(
+                where: { assetLocale($0, matches: locale) }
+            ) {
+                return
+            }
+            guard attempt == 1 else {
+                throw AppleSpeechServiceError.temporarilyUnavailable
+            }
+            AppLog.providers.notice(
+                "Apple Speech returned no asset reservation; retrying"
+            )
+            try await Task.sleep(for: .milliseconds(500))
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private func downloadAsset(
+        supporting transcriber: SpeechTranscriber,
+        progressHandler: @escaping @MainActor (Double) -> Void
+    ) async throws {
+        guard
+            let request =
+                try await AssetInventory.assetInstallationRequest(
+                    supporting: [transcriber]
+                )
+        else {
+            guard
+                await AssetInventory.status(forModules: [transcriber])
+                    == .installed
+            else {
+                throw AppleSpeechServiceError.installationFailed
+            }
+            progressHandler(1)
+            return
+        }
+
+        let progress = request.progress
+        let monitor = Task {
+            while !Task.isCancelled {
+                progressHandler(progress.fractionCompleted)
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+        }
+        defer {
+            monitor.cancel()
+        }
+
+        try await request.downloadAndInstall()
+        progressHandler(1)
+    }
+
+    private func assetLocale(
+        _ locale: Locale,
+        matches requestedLocale: Locale
+    ) -> Bool {
+        locale.language.languageCode
+            == requestedLocale.language.languageCode
+            && locale.language.script
+                == requestedLocale.language.script
+            && locale.region == requestedLocale.region
+    }
+
+    private func isXPCConnectionFailure(_ error: Error) -> Bool {
+        errorChain(error).contains { error in
+            guard error.domain == NSCocoaErrorDomain else {
+                return false
+            }
+            return error.code == NSXPCConnectionInterrupted
+                || error.code == NSXPCConnectionInvalid
+                || error.code == NSXPCConnectionReplyInvalid
+        }
+    }
+
+    private func logFrameworkFailure(
+        _ error: Error,
+        operation: String
+    ) {
+        for (depth, frameworkError) in errorChain(error).enumerated() {
+            AppLog.providers.error(
+                "Apple Speech \(operation, privacy: .public) failure \(depth, privacy: .public): domain=\(frameworkError.domain, privacy: .public) code=\(frameworkError.code, privacy: .public)"
+            )
+        }
+    }
+
+    private func errorChain(_ error: Error) -> [NSError] {
+        var result: [NSError] = []
+        var current: NSError? = error as NSError
+
+        while let frameworkError = current, result.count < 3 {
+            result.append(frameworkError)
+            current = frameworkError.userInfo[NSUnderlyingErrorKey]
+                as? NSError
+        }
+        return result
     }
 
     @available(macOS 26.0, *)

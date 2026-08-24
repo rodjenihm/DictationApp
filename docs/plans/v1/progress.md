@@ -450,6 +450,30 @@ Verified:
   validation, persistence, provider, dependency, framework, test, or
   privacy-sensitive logging code changed.
 
+2026-08-24 transient Apple Speech recovery follow-up:
+
+- Corrected Apple locale installation so an invalid Speech XPC connection is
+  no longer presented as reservation exhaustion. Equivalent existing
+  reservations are reused, and capacity-specific copy now requires a confirmed
+  per-app reservation limit.
+- Added one 500-millisecond retry for unexpected reservation failures and for
+  installation failures classified as invalid, interrupted, or invalid-reply
+  XPC connections. Persistent transient failure now tells the user to retry and
+  to quit and reopen DictationApp if necessary.
+- Coalesced overlapping Apple support/asset refreshes from initialization,
+  Settings presentation, activation, and language changes. Refreshes do not
+  overlap an active installation, and identical candidate/saved locales reuse
+  one asset-state result.
+- Added privacy-safe provider diagnostics containing only operation class,
+  bounded error-chain depth, error domain, and numeric code; locale identifiers
+  and framework descriptions remain absent.
+- A logout and sleep attempt did not reproduce the original invalid Speech XPC
+  connection, so no wake-specific observer or behavior was added.
+- Unsigned arm64 Debug and Release builds succeeded with the macOS 15.0 target;
+  `git diff --check`, changed-path review, and changed-source privacy review
+  passed. The invalid XPC connection could not be forced, so recovery branches
+  were verified statically rather than through a live service failure.
+
 Verification limitations:
 
 - Runtime compatibility on an actual macOS 15 Apple Silicon Mac or VM remains unavailable; binary targeting and build compatibility were verified on the current macOS 26.5 Apple Silicon host.

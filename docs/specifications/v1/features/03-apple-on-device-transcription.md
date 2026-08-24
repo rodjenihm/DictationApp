@@ -213,6 +213,27 @@ During Apple setup or a locale change:
 4. Keep Save or Finish Setup unavailable until installation succeeds.
 5. Validate that the asset is usable before committing the configuration.
 
+Coalesce overlapping activation, presentation, and language-change refresh
+requests so only one Speech asset-state query sequence runs at a time. A
+request received during an in-flight refresh schedules at most one follow-up
+refresh.
+
+Before reserving a locale, reuse an equivalent existing app reservation. Show
+the reservation-capacity failure only when the app's current reservation count
+has reached `AssetInventory.maximumReservedLocales`. For other reservation
+failures:
+
+- Log only the framework error domain and code, including bounded underlying
+  errors. Do not log locale identifiers or framework error descriptions.
+- Retry once after a short cancellation-aware delay.
+- If the retry fails, report Apple Speech as temporarily unavailable and tell
+  the user to try again, then quit and reopen DictationApp if necessary.
+
+Apply the same single retry to an asset-installation failure classified as an
+invalid, interrupted, or invalid-reply XPC connection. Do not automatically
+retry unsupported assets, installation failures without an XPC classification,
+or a confirmed reservation-capacity failure.
+
 Asset installation must never begin when the dictation shortcut is pressed.
 
 When replacing an active Apple locale:
@@ -438,6 +459,9 @@ Selecting Apple must not automatically disable post-processing.
 - Apple never falls back to OpenAI without an explicit validated user action.
 - Missing permission, locale support, or asset state produces actionable
   provider/stage readiness and repair UI.
+- A transient Apple Speech XPC failure is not presented as reservation
+  exhaustion; Settings performs one bounded retry and preserves actionable
+  restart guidance if recovery fails.
 - Switching Apple locales does not release the previous working reservation
   before replacement setup and save succeed.
 - OpenAI post-processing remains usable with Apple transcription and its
@@ -460,6 +484,8 @@ The implementation plan must cover manual verification for:
 - Cancellation during Apple analysis.
 - Empty speech, analyzer failure, retained retry, and explicit provider repair.
 - Settings discard and failed-save reservation compensation.
+- Repeated activation/presentation refresh requests are coalesced, and a
+  transient Speech XPC installation failure receives one bounded retry.
 - Debug and Release builds.
 
 Latency comparison or instrumentation is not required.

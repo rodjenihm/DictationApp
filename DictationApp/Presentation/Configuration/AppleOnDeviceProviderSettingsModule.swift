@@ -34,6 +34,8 @@ final class AppleOnDeviceProviderSettingsModule:
     private var pendingCommit: AppleProviderCommitState?
     private var candidateWasStaged = false
     private var draftReservedLocaleIDs: Set<String> = []
+    private var stateRefreshTask: Task<Void, Never>?
+    private var stateRefreshRequested = false
 
     init(
         speechService: AppleSpeechService,
@@ -161,9 +163,7 @@ final class AppleOnDeviceProviderSettingsModule:
     func refreshSystemState() {
         permissionStatus =
             permissionService.speechRecognitionStatus()
-        Task {
-            await refreshSupport()
-        }
+        requestStateRefresh()
     }
 
     func stageTranscriptionLanguage(
@@ -191,9 +191,7 @@ final class AppleOnDeviceProviderSettingsModule:
         candidateAssetState = .supported
         installationErrorMessage = nil
         installationProgress = 0
-        Task {
-            await refreshAssetStates()
-        }
+        requestStateRefresh()
     }
 
     func installSelectedLocale() async {
@@ -227,10 +225,15 @@ final class AppleOnDeviceProviderSettingsModule:
 
         isInstalling = true
         installationProgress = 0
-        candidateAssetState = .downloading
         defer {
             isInstalling = false
+            requestStateRefresh()
         }
+
+        if let stateRefreshTask {
+            await stateRefreshTask.value
+        }
+        candidateAssetState = .downloading
 
         do {
             try await speechService.installAsset(
@@ -407,9 +410,14 @@ final class AppleOnDeviceProviderSettingsModule:
     }
 
     private func refreshAssetStates() async {
-        if let candidate = candidateLocaleIdentifier.nilIfEmpty {
-            candidateAssetState =
-                await speechService.assetState(for: candidate)
+        let candidate = candidateLocaleIdentifier.nilIfEmpty
+        if let candidate {
+            let state = await speechService.assetState(for: candidate)
+            candidateAssetState = state
+            if savedLocaleIdentifier == candidate {
+                savedAssetState = state
+                return
+            }
         } else {
             candidateAssetState = .unsupported
         }
@@ -421,6 +429,32 @@ final class AppleOnDeviceProviderSettingsModule:
         } else {
             savedAssetState = .unsupported
         }
+    }
+
+    private func requestStateRefresh() {
+        stateRefreshRequested = true
+        guard stateRefreshTask == nil, !isInstalling else {
+            return
+        }
+
+        stateRefreshTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await runStateRefreshLoop()
+        }
+    }
+
+    private func runStateRefreshLoop() async {
+        while
+            stateRefreshRequested,
+            !isInstalling,
+            !Task.isCancelled
+        {
+            stateRefreshRequested = false
+            await refreshSupport()
+        }
+        stateRefreshTask = nil
     }
 
     private func readiness(

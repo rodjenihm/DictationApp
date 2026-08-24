@@ -284,3 +284,40 @@ repair interaction were not performed because they require changing the
 current user's macOS permission, asset, and application configuration state.
 Those checks remain in the focused manual-verification list above. No latency
 measurement was performed, as required by the specification.
+
+## 2026-08-24 transient Speech service recovery follow-up
+
+Implemented:
+
+- Reuse equivalent existing locale reservations before calling
+  `AssetInventory.reserve(locale:)`, including identifier-format variants.
+- Reserve the capacity-specific failure for a confirmed
+  `maximumReservedLocales` limit; map other exhausted reservation attempts to
+  temporary Apple Speech unavailability.
+- Record privacy-safe framework error chains using only error domains, numeric
+  codes, operation classifications, and bounded chain depth.
+- Retry reservation failures once after 500 milliseconds and retry installation
+  only for invalid, interrupted, or invalid-reply XPC connections.
+- Coalesce overlapping Settings asset refresh requests and defer queued refresh
+  work until an active installation finishes.
+- Reuse the candidate asset result for the saved locale when both identifiers
+  match, avoiding a duplicate `AssetInventory.status` query.
+
+The follow-up intentionally adds no sleep/wake observer. A logout and sleep
+attempt did not reproduce the failure, while unified logs from the original
+incident identified an invalid Speech XPC connection without establishing its
+trigger.
+
+Verified:
+
+- Unsigned arm64 Debug and Release builds succeeded with the macOS 15.0
+  deployment target, complete strict concurrency, approachable concurrency,
+  and MainActor default isolation.
+- `git diff --check` and focused changed-path review passed.
+- Changed-source privacy review confirmed that diagnostics contain no locale,
+  transcript, audio, credential, clipboard, filename, device, or application
+  identifiers and no framework descriptions.
+
+The invalid XPC connection could not be induced after the change, so the retry
+and persistent-failure UI branches were verified by source inspection and both
+build configurations rather than a live forced service failure.
