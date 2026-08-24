@@ -21,11 +21,13 @@ struct ConfigurationTranscriptionView: View {
                     modelSelection
                 }
                 languageSelection
-                ConfigurationStageDisclosure(
-                    viewModel: viewModel,
-                    provider: viewModel.transcriptionProviderChoice,
-                    capability: .transcription
-                )
+                ConfigurationFormSupplementary {
+                    ConfigurationStageDisclosure(
+                        viewModel: viewModel,
+                        provider: viewModel.transcriptionProviderChoice,
+                        capability: .transcription
+                    )
+                }
             }
         }
         .onChange(of: viewModel.issues, initial: true) {
@@ -53,7 +55,7 @@ struct ConfigurationTranscriptionView: View {
                 capability: .transcription
             )
         } else {
-            LabeledContent("Provider") {
+            ConfigurationSettingRow("Provider") {
                 Picker(
                     "Transcription provider",
                     selection: Binding(
@@ -76,14 +78,14 @@ struct ConfigurationTranscriptionView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 320)
+                .configurationPickerControl()
             }
         }
     }
 
     @ViewBuilder
     private var modelSelection: some View {
-        LabeledContent("Model") {
+        ConfigurationSettingRow("Model") {
             Picker(
                 "Transcription model",
                 selection: $viewModel.transcriptionModelChoice
@@ -115,33 +117,38 @@ struct ConfigurationTranscriptionView: View {
                 }
             }
             .labelsHidden()
-            .frame(maxWidth: 320)
+            .configurationPickerControl()
         }
 
         if
             viewModel.transcriptionModelChoice
                 == ConfigurationViewModel.customModelChoice
         {
-            TextField(
-                "Custom model identifier",
-                text: $viewModel.transcriptionCustomModel
-            )
-            .textFieldStyle(.roundedBorder)
-            .focused($focusedField, equals: .transcriptionModel)
-            .accessibilityLabel(
-                "Custom transcription model identifier"
-            )
+            ConfigurationSettingRow("Custom model") {
+                TextField(
+                    "Custom model identifier",
+                    text: $viewModel.transcriptionCustomModel
+                )
+                .textFieldStyle(.roundedBorder)
+                .configurationFieldControl()
+                .focused($focusedField, equals: .transcriptionModel)
+                .accessibilityLabel(
+                    "Custom transcription model identifier"
+                )
+            }
         }
 
         if let issue = viewModel.issue(for: .transcriptionModel) {
-            ConfigurationIssueLabel(message: issue.message)
+            ConfigurationFormSupplementary {
+                ConfigurationIssueLabel(message: issue.message)
+            }
         }
     }
 
     @ViewBuilder
     private var languageSelection: some View {
         if viewModel.presentationMode == .full {
-            LabeledContent("Language") {
+            ConfigurationSettingRow("Language") {
                 Picker(
                     "Language",
                     selection: $viewModel.languageCode
@@ -168,19 +175,19 @@ struct ConfigurationTranscriptionView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 320)
+                .configurationPickerControl()
                 .focused($focusedField, equals: .language)
-            }
-
-            if viewModel.hasUnsupportedLanguageSelection {
-                ConfigurationIssueLabel(
-                    message:
-                        "The selected provider does not support this language.",
-                    warning: true
-                )
+            } detail: {
+                if viewModel.hasUnsupportedLanguageSelection {
+                    ConfigurationIssueLabel(
+                        message:
+                            "The selected provider does not support this language.",
+                        warning: true
+                    )
+                }
             }
         } else {
-            LabeledContent("Language") {
+            ConfigurationSettingRow("Language") {
                 Text(viewModel.repairLanguageTitle)
                     .foregroundStyle(.secondary)
             }
@@ -242,7 +249,9 @@ struct ConfigurationPostProcessingView: View {
                 )
 
                 if viewModel.postProcessingEnabled {
-                    enabledConfiguration
+                    ConfigurationForm {
+                        enabledConfiguration
+                    }
                 } else {
                     Text(
                         "The raw transcript is inserted without an additional provider request."
@@ -281,7 +290,7 @@ struct ConfigurationPostProcessingView: View {
                 capability: .postProcessing
             )
         } else {
-            LabeledContent("Provider") {
+            ConfigurationSettingRow("Provider") {
                 Picker(
                     "Post-processing provider",
                     selection: Binding(
@@ -304,11 +313,11 @@ struct ConfigurationPostProcessingView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 320)
+                .configurationPickerControl()
             }
         }
 
-        LabeledContent("Model") {
+        ConfigurationSettingRow("Model") {
             Picker(
                 "Post-processing model",
                 selection: $viewModel.postProcessingModelChoice
@@ -334,36 +343,43 @@ struct ConfigurationPostProcessingView: View {
                 }
             }
             .labelsHidden()
-            .frame(maxWidth: 320)
+            .configurationPickerControl()
         }
 
         if
             viewModel.postProcessingModelChoice
                 == ConfigurationViewModel.customModelChoice
         {
-            TextField(
-                "Custom model identifier",
-                text: $viewModel.postProcessingCustomModel
-            )
-            .textFieldStyle(.roundedBorder)
-            .focused(
-                $focusedField,
-                equals: .postProcessingModel
-            )
-            .accessibilityLabel(
-                "Custom post-processing model identifier"
-            )
+            ConfigurationSettingRow("Custom model") {
+                TextField(
+                    "Custom model identifier",
+                    text: $viewModel.postProcessingCustomModel
+                )
+                .textFieldStyle(.roundedBorder)
+                .configurationFieldControl()
+                .focused(
+                    $focusedField,
+                    equals: .postProcessingModel
+                )
+                .accessibilityLabel(
+                    "Custom post-processing model identifier"
+                )
+            }
         }
 
         if let issue = viewModel.issue(for: .postProcessingModel) {
-            ConfigurationIssueLabel(message: issue.message)
+            ConfigurationFormSupplementary {
+                ConfigurationIssueLabel(message: issue.message)
+            }
         }
 
-        ConfigurationStageDisclosure(
-            viewModel: viewModel,
-            provider: viewModel.postProcessingProviderChoice,
-            capability: .postProcessing
-        )
+        ConfigurationFormSupplementary {
+            ConfigurationStageDisclosure(
+                viewModel: viewModel,
+                provider: viewModel.postProcessingProviderChoice,
+                capability: .postProcessing
+            )
+        }
     }
 
     private func routeIssueFocus() {

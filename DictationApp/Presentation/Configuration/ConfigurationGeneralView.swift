@@ -21,7 +21,7 @@ struct ConfigurationGeneralView: View {
             "Recording",
             systemImage: "mic"
         ) {
-            LabeledContent("Microphone") {
+            ConfigurationSettingRow("Microphone") {
                 Picker(
                     "Microphone",
                     selection: $viewModel.audioInputSelection
@@ -47,24 +47,24 @@ struct ConfigurationGeneralView: View {
                     }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 320)
+                .configurationPickerControl()
                 .accessibilityLabel("Microphone")
                 .accessibilityValue(
                     viewModel.audioInputDisplayName(
                         for: viewModel.audioInputPreference
                     )
                 )
+            } detail: {
+                ConfigurationStatusLabel(
+                    title: viewModel.audioInputPreferenceStatusMessage,
+                    systemImage: viewModel.isAudioInputPreferenceAvailable
+                        ? "checkmark.circle"
+                        : "exclamationmark.triangle.fill",
+                    style: viewModel.isAudioInputPreferenceAvailable
+                        ? .neutral
+                        : .attention
+                )
             }
-
-            ConfigurationStatusLabel(
-                title: viewModel.audioInputPreferenceStatusMessage,
-                systemImage: viewModel.isAudioInputPreferenceAvailable
-                    ? "checkmark.circle"
-                    : "exclamationmark.triangle.fill",
-                style: viewModel.isAudioInputPreferenceAvailable
-                    ? .neutral
-                    : .attention
-            )
         }
     }
 
@@ -349,22 +349,19 @@ private struct ConfigurationPermissionRow<Action: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            LabeledContent(title) {
-                HStack(spacing: 10) {
-                    ConfigurationPermissionStatusLabel(
-                        title: statusTitle,
-                        granted: granted
-                    )
-                    action
-                        .fixedSize()
-                }
+        ConfigurationSettingRow(title) {
+            HStack(spacing: 10) {
+                ConfigurationPermissionStatusLabel(
+                    title: statusTitle,
+                    granted: granted
+                )
+                action
+                    .fixedSize()
             }
-
+        } detail: {
             Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

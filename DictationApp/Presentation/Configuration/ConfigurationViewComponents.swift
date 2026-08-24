@@ -87,6 +87,123 @@ struct ConfigurationForm<Content: View>: View {
     }
 }
 
+private enum ConfigurationFormMetrics {
+    static let labelWidth: CGFloat = 128
+    static let columnSpacing: CGFloat = 14
+    static let fieldWidth: CGFloat = 220
+}
+
+struct ConfigurationSettingRow<Content: View, Detail: View>: View {
+    let title: String
+    private let content: Content
+    private let detail: Detail
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        _ title: String,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder detail: () -> Detail
+    ) {
+        self.title = title
+        self.content = content()
+        self.detail = detail()
+    }
+
+    var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) {
+                    label
+                    valueColumn
+                }
+            } else {
+                HStack(
+                    alignment: .firstTextBaseline,
+                    spacing: ConfigurationFormMetrics.columnSpacing
+                ) {
+                    label
+                        .frame(
+                            width: ConfigurationFormMetrics.labelWidth,
+                            alignment: .leading
+                        )
+                    valueColumn
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var label: some View {
+        Text(title)
+    }
+
+    private var valueColumn: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content
+            detail
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension ConfigurationSettingRow where Detail == EmptyView {
+    init(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(title, content: content) {
+            EmptyView()
+        }
+    }
+}
+
+struct ConfigurationFormSupplementary<Content: View>: View {
+    private let content: Content
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(
+                alignment: .firstTextBaseline,
+                spacing: ConfigurationFormMetrics.columnSpacing
+            ) {
+                Color.clear
+                    .frame(width: ConfigurationFormMetrics.labelWidth)
+                    .accessibilityHidden(true)
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+extension View {
+    func configurationFieldControl() -> some View {
+        frame(
+            width: ConfigurationFormMetrics.fieldWidth,
+            alignment: .leading
+        )
+        .controlSize(.regular)
+    }
+
+    @ViewBuilder
+    func configurationPickerControl() -> some View {
+        if #available(macOS 26.0, *) {
+            buttonSizing(.flexible)
+                .configurationFieldControl()
+        } else {
+            configurationFieldControl()
+        }
+    }
+}
+
 enum ConfigurationStatusStyle {
     case neutral
     case success

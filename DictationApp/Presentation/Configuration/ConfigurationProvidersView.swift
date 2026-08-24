@@ -139,7 +139,7 @@ private struct ConfigurationProviderDetailView: View {
                                             capability
                                         ]
                                 {
-                                    LabeledContent(
+                                    ConfigurationSettingRow(
                                         capability.displayName
                                     ) {
                                         Text(

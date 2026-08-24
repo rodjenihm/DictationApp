@@ -308,38 +308,43 @@ struct OpenAIProviderSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LabeledContent("Status") {
-                ConfigurationStatusLabel(
-                    title: readinessTitle,
-                    systemImage: readinessSystemImage,
-                    style: readinessStyle,
-                    font: .body
-                )
+            ConfigurationForm {
+                ConfigurationSettingRow("Status") {
+                    ConfigurationStatusLabel(
+                        title: readinessTitle,
+                        systemImage: readinessSystemImage,
+                        style: readinessStyle,
+                        font: .body
+                    )
+                }
+
+                ConfigurationSettingRow("API key") {
+                    SecureField(
+                        module.savedCredentialExists
+                            ? "Enter a new key to replace the saved key"
+                            : "Enter your OpenAI API key",
+                        text: Binding(
+                            get: { module.candidateAPIKey },
+                            set: { module.setCandidateAPIKey($0) }
+                        )
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .configurationFieldControl()
+                    .accessibilityLabel("OpenAI API key")
+                } detail: {
+                    Text(
+                        "The key is stored in macOS Keychain and is never displayed again."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    Text(
+                        "Saving validates this configuration using bundled, non-user data."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
-
-            SecureField(
-                module.savedCredentialExists
-                    ? "Enter a new key to replace the saved key"
-                    : "Enter your OpenAI API key",
-                text: Binding(
-                    get: { module.candidateAPIKey },
-                    set: { module.setCandidateAPIKey($0) }
-                )
-            )
-            .textFieldStyle(.roundedBorder)
-            .accessibilityLabel("OpenAI API key")
-
-            Text(
-                "The key is stored in macOS Keychain and is never displayed again."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-            Text(
-                "Saving validates this configuration using bundled, non-user data."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
             DisclosureGroup(
                 "What validation sends",

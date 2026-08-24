@@ -511,35 +511,35 @@ private struct AppleOnDeviceProviderSettingsView: View {
         AppleOnDeviceProviderSettingsModule
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LabeledContent("Status") {
+        ConfigurationForm {
+            ConfigurationSettingRow("Status") {
                 ConfigurationStatusLabel(
                     title: statusTitle,
                     systemImage: statusSystemImage,
                     style: statusStyle,
                     font: .body
                 )
+            } detail: {
+                Text(availabilityMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            Text(availabilityMessage)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             if module.supportSnapshot.availability == .available {
-                LabeledContent("Speech Recognition") {
+                ConfigurationSettingRow("Speech Recognition") {
                     Text(permissionTitle)
-                }
-
-                if
-                    module.permissionStatus == .denied
-                        || module.permissionStatus == .restricted
-                {
-                    Button("Open Speech Recognition Settings") {
-                        module.openSpeechRecognitionSettings()
+                } detail: {
+                    if
+                        module.permissionStatus == .denied
+                            || module.permissionStatus == .restricted
+                    {
+                        Button("Open Speech Recognition Settings") {
+                            module.openSpeechRecognitionSettings()
+                        }
                     }
                 }
 
-                LabeledContent("Language") {
+                ConfigurationSettingRow("Language") {
                     Picker(
                         "Apple transcription language",
                         selection: Binding(
@@ -581,69 +581,74 @@ private struct AppleOnDeviceProviderSettingsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(maxWidth: 320)
+                    .configurationPickerControl()
                     .disabled(
                         module.supportSnapshot.supportedLocales
                             .isEmpty
                     )
                 }
 
-                LabeledContent("Language asset") {
+                ConfigurationSettingRow("Language asset") {
                     Text(assetTitle)
-                }
-
-                if module.isInstalling {
-                    ProgressView(
-                        value: module.installationProgress,
-                        total: 1
-                    ) {
-                        Text("Installing language")
-                    }
-                    .accessibilityValue(
-                        "\(Int(module.installationProgress * 100)) percent"
-                    )
-                } else if
-                    module.permissionStatus == .notDetermined,
-                    module.candidateAssetState == .installed
-                {
-                    Button("Allow Speech Recognition") {
-                        Task {
-                            await module
-                                .requestSpeechRecognitionPermission()
+                } detail: {
+                    if module.isInstalling {
+                        ProgressView(
+                            value: module.installationProgress,
+                            total: 1
+                        ) {
+                            Text("Installing language")
                         }
-                    }
-                } else if
-                    module.requiresInstalledLanguageConfirmation
-                {
-                    Button("Use Installed Language") {
-                        module.confirmInstalledLocale()
-                    }
-                } else if module.candidateAssetState != .installed {
-                    Button(
-                        module.permissionStatus == .notDetermined
-                            ? "Allow and Install Language"
-                            : "Install Language"
-                    ) {
-                        Task {
-                            await module.installSelectedLocale()
+                        .configurationFieldControl()
+                        .accessibilityValue(
+                            "\(Int(module.installationProgress * 100)) percent"
+                        )
+                    } else if
+                        module.permissionStatus == .notDetermined,
+                        module.candidateAssetState == .installed
+                    {
+                        Button("Allow Speech Recognition") {
+                            Task {
+                                await module
+                                    .requestSpeechRecognitionPermission()
+                            }
                         }
+                    } else if
+                        module.requiresInstalledLanguageConfirmation
+                    {
+                        Button("Use Installed Language") {
+                            module.confirmInstalledLocale()
+                        }
+                    } else if module.candidateAssetState != .installed {
+                        Button(
+                            module.permissionStatus == .notDetermined
+                                ? "Allow and Install Language"
+                                : "Install Language"
+                        ) {
+                            Task {
+                                await module.installSelectedLocale()
+                            }
+                        }
+                        .disabled(
+                            module.candidateLocaleIdentifier.isEmpty
+                        )
                     }
-                    .disabled(
-                        module.candidateLocaleIdentifier.isEmpty
-                    )
                 }
             }
 
             if let message = module.installationErrorMessage {
-                ConfigurationIssueLabel(message: message)
+                ConfigurationFormSupplementary {
+                    ConfigurationIssueLabel(message: message)
+                }
             }
 
-            Label(
-                "Completed recording audio is processed on this Mac. Apple may be contacted only to install system-managed language assets.",
-                systemImage: "lock.shield"
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            ConfigurationFormSupplementary {
+                Label(
+                    "Completed recording audio is processed on this Mac. Apple may be contacted only to install system-managed language assets.",
+                    systemImage: "lock.shield"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 

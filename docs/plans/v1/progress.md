@@ -405,6 +405,27 @@ Verified:
   keyboard focus, Command-[, hover help, and an explicit accessibility label.
   An isolated live Debug build confirmed activation returned both provider rows.
 
+2026-08-24 aligned-settings-controls follow-up:
+
+- Recorded the completed work as feature 08 with a dedicated
+  [specification](../../specifications/v1/features/08-aligned-settings-controls.md)
+  and [implementation plan](features/08-aligned-settings-controls.md).
+- Added a shared 128-point Settings label column, 14-point column gap, and
+  220-point editable-control width. Field help, validation, permission detail,
+  and processing disclosures now align beneath the control column.
+- Applied the shared form layout across General, Transcription,
+  Post-processing, Providers, OpenAI detail, and Apple On-Device detail while
+  retaining standalone native checkboxes and natural-width actions and status
+  values.
+- Availability-gated macOS 26 flexible picker sizing corrected that release's
+  content-fitting default while preserving the macOS 15 deployment target.
+- Normally signed Debug and unsigned Release builds succeeded. Live app-scoped
+  Accessibility inspection measured representative pickers at 220 by 24 points
+  with matching horizontal origins and confirmed aligned supporting content.
+- `git diff --check` and changed-path scope review passed. No behavior,
+  validation, persistence, provider, dependency, framework, test, or
+  privacy-sensitive logging code changed.
+
 Verification limitations:
 
 - Runtime compatibility on an actual macOS 15 Apple Silicon Mac or VM remains unavailable; binary targeting and build compatibility were verified on the current macOS 26.5 Apple Silicon host.
@@ -423,5 +444,6 @@ Verification limitations:
 
 ## Next action
 
-The **v1 implementation, compact-overlay follow-up, and modernized-settings
-follow-up are complete and awaiting review**.
+The **v1 implementation, compact-overlay follow-up, modernized-settings
+follow-up, and aligned-settings-controls follow-up are complete and awaiting
+review**.
