@@ -205,9 +205,19 @@ Do not add cleanup intensity controls, custom prompts, tone or writing-style pre
 The default cleanup behavior should:
 
 - Add punctuation and paragraph breaks
-- Remove filler words and obvious false starts
-- Preserve meaning, names, technical terms, and language
-- Avoid summarizing or adding information
+- Remove filler words that do not add meaning
+- Remove accidental immediate repetitions caused by hesitation while preserving
+  deliberate repetition used for emphasis
+- Resolve clear speech repairs by removing an abandoned, repeated, restarted,
+  or explicitly corrected fragment and retaining the speaker's final complete
+  formulation, even when transcription punctuation does not mark the repair
+- Never combine wording from a superseded fragment with its replacement
+- Preserve meaningful discourse markers and keep ambiguous possible fillers or
+  repairs instead of guessing
+- Preserve meaning, voice, certainty, names, technical terms, numbers,
+  profanity, and language
+- Avoid summarizing, translating, censoring, embellishing, adding information,
+  or rewriting otherwise fluent wording merely to change its style
 - Derive formatting automatically from the transcript rather than interpreting a spoken-command grammar
 - Return only the cleaned transcript as plain text
 - Preserve meaningful internal paragraph breaks and trim accidental leading or trailing whitespace

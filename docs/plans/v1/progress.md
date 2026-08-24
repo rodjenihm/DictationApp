@@ -270,6 +270,30 @@ Verified:
 - The original enabled/`gpt-5-mini` configuration and pre-verification clipboard content were restored.
 - Temporary harness sources, executables, module caches, signed build products, and logs were removed; repository checks found no Derived Data, result bundles, credential-like API-key values, transcripts, or unrelated changes.
 
+2026-08-24 cleanup-prompt follow-up:
+
+- Reorganized the immutable instructions into explicit input-boundary, editing,
+  example, and output contracts while removing overlapping guidance.
+- Required minimum editing that preserves meaning, voice, certainty, names,
+  technical terms, numbers, profanity, and original or mixed language.
+- Added precise handling for empty fillers, accidental repetition, clear
+  abandoned or corrected phrasing, missing repair punctuation, and fragment
+  splicing. Ambiguous repairs remain unchanged rather than being guessed.
+- Added synthetic contrasting examples for an unpunctuated restart, an explicit
+  correction, and accidental versus intentional repetition.
+- Kept provider selection, minimal reasoning effort, output validation,
+  fallback behavior, and every other post-processing contract unchanged so the
+  prompt optimization remains isolated.
+- Unsigned arm64 Debug and Release builds succeeded with Xcode 26.6 and the
+  macOS 15.0 deployment target.
+
+Verification limitation:
+
+- The revised prompt has not yet been exercised through a live provider call.
+  Build verification confirms the request path, while semantic cleanup remains
+  nondeterministic and requires representative dictation checks with both
+  curated models.
+
 ### Slice 9 — Clipboard preservation and Accessibility insertion
 
 Implemented:
