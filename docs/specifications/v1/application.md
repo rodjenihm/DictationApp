@@ -120,12 +120,9 @@ The initial version uses completed-file transcription:
 - A session cancelled before transcription begins makes no provider request.
 - Preserve the completed file for provider-level automatic retries and an explicit user retry after transcription failure.
 
-The user must be able to choose among the OpenAI transcription models explicitly supported by the application. Initial candidates include:
-
-- `gpt-4o-transcribe`
-- `gpt-4o-mini-transcribe`
-
-Preselect `gpt-4o-transcribe` for new configurations.
+The OpenAI transcription picker preselects `gpt-transcribe`. See the
+[OpenAI model migration specification](features/10-openai-model-migration.md)
+for the catalog, saved selections, and request format.
 
 The exact supported model catalog may evolve independently of the provider abstraction. UI display names must map to explicit API model identifiers.
 
@@ -149,7 +146,11 @@ Language selection behavior:
 - Preserve the spoken language, including mixed-language content, in both the raw and post-processed transcript.
 - Do not add translation to the initial version.
 
-Apple `SpeechTranscriber` is the first planned provider after the initial version. Because the API requires macOS 26 or later, it must be isolated behind OS availability checks. The app must also detect hardware capability, locale support, and installed language assets at runtime. An Apple Silicon Mac must not be assumed to have a usable Apple transcription model.
+Apple On-Device uses `SpeechTranscriber` on macOS 26 and later. The app
+checks hardware capability, locale support, and installed language assets
+at runtime. See the
+[live Apple On-Device specification](features/11-live-apple-transcription.md)
+for analysis during recording and completed-file recovery.
 
 Other future providers may include ElevenLabs, a bundled or user-selected local Whisper/Parakeet runtime, and other cloud transcription APIs.
 
@@ -186,17 +187,15 @@ Present post-processing as a provider-neutral capability:
 
 Post-processing model selection follows the same curated-plus-custom approach as transcription. A custom model must pass a lightweight post-processing operation before it can be saved as active.
 
-The initial curated OpenAI post-processing models are:
-
-- `gpt-5-mini`, preselected when post-processing is enabled
-- `gpt-5-nano`, presented as the faster, lower-cost alternative
-
-Do not include GPT-4-family models in the initial curated post-processing catalog.
+The curated OpenAI post-processing models are `gpt-6-luna`, the fast
+default for new configurations, and `gpt-6.1-terra`.
 
 When enabled, post-processing runs for every transcript. Do not add another model to decide whether cleanup is worthwhile.
 
-OpenAI post-processing and its lightweight validation request use `minimal`
-reasoning effort to reduce latency and reasoning-token cost.
+OpenAI post-processing and its lightweight validation request use `none`
+reasoning effort for the curated models and `minimal` for other custom model
+IDs. GPT-6 Luna requests Fast mode, which has a higher per-token cost.
+See the [OpenAI model migration specification](features/10-openai-model-migration.md).
 
 The initial version provides one built-in cleanup behavior. Users may enable or disable it and choose its provider and model, but cannot customize the cleanup instructions.
 
@@ -263,6 +262,11 @@ The initial version supports only one active or failed session:
 - Treat this as an initial-version workflow constraint, not a requirement for future session-history behavior.
 
 After all automatic post-processing attempts fail, apply the raw-transcript fallback without requiring user action.
+
+Post-processing also has a total deadline for request preparation, attempts,
+retry waits, and output validation. Fall back to the raw transcript when
+the deadline expires. See the
+[dictation pipeline latency specification](features/09-dictation-pipeline-latency.md#cleanup-responsiveness).
 
 ### Permanent configuration failures
 

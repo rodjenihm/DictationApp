@@ -17,13 +17,13 @@ final class CoreAudioRecorder: AudioRecorder {
 
     private var context: CoreAudioCaptureContext?
     private var startContinuation:
-        CheckedContinuation<Void, any Error>?
+        CheckedContinuation<ContinuousClock.Instant, any Error>?
     private var startTimeoutTask: Task<Void, Never>?
     private var preparingSessionIdentifiers: Set<UUID> = []
     private var cancelledSessionIdentifiers: Set<UUID> = []
     private var isExpectedFinish = false
     private var hasAcceptedAudio = false
-    private var engineStartBeganAt: TimeInterval?
+    private var engineStartBeganAt: ContinuousClock.Instant?
     private var terminationContext: CoreAudioCaptureContext?
 
     init(
@@ -37,9 +37,10 @@ final class CoreAudioRecorder: AudioRecorder {
     func prepare(
         profile: RecordingProfile,
         audioInputPreference: AudioInputPreference,
-        sessionIdentifier: UUID
+        sessionIdentifier: UUID,
+        includeLiveAudio: Bool
     ) async throws -> PreparedRecording {
-        let preparationBeganAt = ProcessInfo.processInfo.systemUptime
+        let preparationBeganAt = ContinuousClock.now
         AppLog.capture.info("Streaming capture preparation started")
         guard context == nil else {
             AppLog.capture.error(
@@ -80,12 +81,14 @@ final class CoreAudioRecorder: AudioRecorder {
             var lastError: (any Error)?
 
             for candidate in candidates {
+                try Task.checkCancellation()
                 do {
                     preparedContext = try await configureCapture(
                         profile: profile,
                         outputURL: outputURL,
                         candidate: candidate,
-                        sessionIdentifier: sessionIdentifier
+                        sessionIdentifier: sessionIdentifier,
+                        includeLiveAudio: includeLiveAudio
                     )
                     break
                 } catch {
@@ -124,18 +127,15 @@ final class CoreAudioRecorder: AudioRecorder {
 
             context = preparedContext
             installFailureObservers(for: preparedContext)
-            let elapsedMilliseconds = Int(
-                (
-                    ProcessInfo.processInfo.systemUptime
-                        - preparationBeganAt
-                ) * 1_000
-            )
-            AppLog.capture.info(
-                "Streaming capture preparation succeeded in \(elapsedMilliseconds, privacy: .public) ms"
+            AppLog.recordLatency(
+                "capture_preparation",
+                since: preparationBeganAt,
+                sessionID: sessionIdentifier
             )
             return PreparedRecording(
                 inputDeviceName: preparedContext.inputDeviceName,
-                isUsingFallback: preparedContext.isUsingFallback
+                isUsingFallback: preparedContext.isUsingFallback,
+                liveAudio: preparedContext.liveAudio
             )
         } catch {
             let wasCancelled =
@@ -150,12 +150,12 @@ final class CoreAudioRecorder: AudioRecorder {
         }
     }
 
-    func startPreparedRecording() async throws {
+    func startPreparedRecording() async throws -> ContinuousClock.Instant {
         guard let context else {
             throw AudioRecorderError.cannotStart
         }
 
-        engineStartBeganAt = ProcessInfo.processInfo.systemUptime
+        engineStartBeganAt = ContinuousClock.now
         startTimeoutTask?.cancel()
         startTimeoutTask = Task {
             @concurrent [weak self, sessionIdentifier =
@@ -194,7 +194,6 @@ final class CoreAudioRecorder: AudioRecorder {
             throw AudioRecorderError.cannotFinalize
         }
 
-        let finalizationBeganAt = ProcessInfo.processInfo.systemUptime
         isExpectedFinish = true
         let outputURL: URL
         do {
@@ -210,18 +209,15 @@ final class CoreAudioRecorder: AudioRecorder {
         clearContext(ifMatching: context)
 
         do {
+            let validationBeganAt = ContinuousClock.now
             let artifact = try await validateArtifact(
                 at: outputURL,
                 context: context
             )
-            let elapsedMilliseconds = Int(
-                (
-                    ProcessInfo.processInfo.systemUptime
-                        - finalizationBeganAt
-                ) * 1_000
-            )
-            AppLog.capture.info(
-                "Streaming capture finalized in \(elapsedMilliseconds, privacy: .public) ms"
+            AppLog.recordLatency(
+                "capture_artifact_validation",
+                since: validationBeganAt,
+                sessionID: context.sessionIdentifier
             )
             return artifact
         } catch {
@@ -239,6 +235,7 @@ final class CoreAudioRecorder: AudioRecorder {
             return
         }
 
+        context.liveAudio?.abort()
         startContinuation?.resume(throwing: CancellationError())
         startContinuation = nil
         startTimeoutTask?.cancel()
@@ -262,6 +259,7 @@ final class CoreAudioRecorder: AudioRecorder {
             return
         }
 
+        context.liveAudio?.abort()
         self.context = nil
         removeFailureObservers(from: context)
         startContinuation?.resume(throwing: CancellationError())
@@ -302,6 +300,7 @@ final class CoreAudioRecorder: AudioRecorder {
             return
         }
 
+        context.liveAudio?.abort()
         self.context = nil
         removeFailureObservers(from: context)
         startContinuation?.resume(throwing: CancellationError())
@@ -322,13 +321,15 @@ final class CoreAudioRecorder: AudioRecorder {
         profile: RecordingProfile,
         outputURL: URL,
         candidate: AudioInputCaptureCandidate,
-        sessionIdentifier: UUID
+        sessionIdentifier: UUID,
+        includeLiveAudio: Bool
     ) async throws -> CoreAudioCaptureContext {
-        let onFirstBuffer: @Sendable (UUID) -> Void = {
-            [weak self] identifier in
+        let onFirstBuffer: @Sendable (UUID, ContinuousClock.Instant) -> Void = {
+            [weak self] identifier, acceptedAt in
             Task { @MainActor [weak self] in
                 self?.handleFirstAcceptedBuffer(
-                    sessionIdentifier: identifier
+                    sessionIdentifier: identifier,
+                    acceptedAt: acceptedAt
                 )
             }
         }
@@ -353,6 +354,7 @@ final class CoreAudioRecorder: AudioRecorder {
                         isUsingFallback: candidate.isFallback,
                         profile: profile,
                         sessionIdentifier: sessionIdentifier,
+                        includeLiveAudio: includeLiveAudio,
                         onFirstBuffer: onFirstBuffer,
                         onWriteFailure: onWriteFailure
                     )
@@ -369,7 +371,8 @@ final class CoreAudioRecorder: AudioRecorder {
     }
 
     private func handleFirstAcceptedBuffer(
-        sessionIdentifier: UUID
+        sessionIdentifier: UUID,
+        acceptedAt: ContinuousClock.Instant
     ) {
         guard
             let context,
@@ -384,18 +387,15 @@ final class CoreAudioRecorder: AudioRecorder {
         startTimeoutTask = nil
         hasAcceptedAudio = true
         if let engineStartBeganAt {
-            let elapsedMilliseconds = Int(
-                (
-                    ProcessInfo.processInfo.systemUptime
-                        - engineStartBeganAt
-                ) * 1_000
-            )
-            AppLog.capture.info(
-                "Audio input unit reached first buffer in \(elapsedMilliseconds, privacy: .public) ms"
+            AppLog.recordLatency(
+                "audio_unit_start_to_first_audio",
+                since: engineStartBeganAt,
+                sessionID: sessionIdentifier,
+                until: acceptedAt
             )
         }
         self.engineStartBeganAt = nil
-        continuation.resume()
+        continuation.resume(returning: acceptedAt)
     }
 
     private func handleAudioUnitStartFailure(
@@ -482,6 +482,7 @@ final class CoreAudioRecorder: AudioRecorder {
         }
 
         candidate.isHandlingUnexpectedFailure = true
+        candidate.liveAudio?.abort()
         AppLog.capture.error(
             "Streaming capture received an unexpected termination signal"
         )
@@ -520,6 +521,7 @@ final class CoreAudioRecorder: AudioRecorder {
     private func finishCapture(
         _ context: CoreAudioCaptureContext
     ) async throws -> URL {
+        let finalizationBeganAt = ContinuousClock.now
         let result = await withCheckedContinuation { continuation in
             runtime.queue.async { [context] in
                 continuation.resume(
@@ -528,6 +530,20 @@ final class CoreAudioRecorder: AudioRecorder {
             }
         }
 
+        if let audioStoppedAt = result.audioStoppedAt {
+            AppLog.recordLatency(
+                "capture_finalization_to_microphone_stop",
+                since: finalizationBeganAt,
+                sessionID: context.sessionIdentifier,
+                until: audioStoppedAt
+            )
+        }
+        AppLog.recordLatency(
+            "m4a_writer_close",
+            since: result.writerClosingAt,
+            sessionID: context.sessionIdentifier,
+            until: result.writerClosedAt
+        )
         if !result.audioUnitTeardown.wasDisposed {
             AppLog.capture.error(
                 "Audio input teardown could not safely dispose capture resources"
@@ -655,7 +671,8 @@ nonisolated private final class CoreAudioCaptureContext:
     let isUsingFallback: Bool
     let profile: RecordingProfile
     let sessionIdentifier: UUID
-    let onFirstBuffer: @Sendable (UUID) -> Void
+    let liveAudio: LiveRecordingAudio?
+    let onFirstBuffer: @Sendable (UUID, ContinuousClock.Instant) -> Void
     let onWriteFailure: @Sendable (UUID) -> Void
 
     var deviceAvailabilityObservation:
@@ -681,7 +698,8 @@ nonisolated private final class CoreAudioCaptureContext:
         isUsingFallback: Bool,
         profile: RecordingProfile,
         sessionIdentifier: UUID,
-        onFirstBuffer: @escaping @Sendable (UUID) -> Void,
+        liveAudio: LiveRecordingAudio?,
+        onFirstBuffer: @escaping @Sendable (UUID, ContinuousClock.Instant) -> Void,
         onWriteFailure: @escaping @Sendable (UUID) -> Void
     ) {
         self.runtime = runtime
@@ -694,6 +712,7 @@ nonisolated private final class CoreAudioCaptureContext:
         self.isUsingFallback = isUsingFallback
         self.profile = profile
         self.sessionIdentifier = sessionIdentifier
+        self.liveAudio = liveAudio
         self.onFirstBuffer = onFirstBuffer
         self.onWriteFailure = onWriteFailure
     }
@@ -706,7 +725,8 @@ nonisolated private final class CoreAudioCaptureContext:
         isUsingFallback: Bool,
         profile: RecordingProfile,
         sessionIdentifier: UUID,
-        onFirstBuffer: @escaping @Sendable (UUID) -> Void,
+        includeLiveAudio: Bool,
+        onFirstBuffer: @escaping @Sendable (UUID, ContinuousClock.Instant) -> Void,
         onWriteFailure: @escaping @Sendable (UUID) -> Void
     ) throws -> CoreAudioCaptureContext {
         var description = AudioComponentDescription(
@@ -859,6 +879,8 @@ nonisolated private final class CoreAudioCaptureContext:
                 isUsingFallback: isUsingFallback,
                 profile: profile,
                 sessionIdentifier: sessionIdentifier,
+                liveAudio: includeLiveAudio
+                    ? LiveRecordingAudio(format: inputFormat) : nil,
                 onFirstBuffer: onFirstBuffer,
                 onWriteFailure: onWriteFailure
             )
@@ -939,9 +961,12 @@ nonisolated private final class CoreAudioCaptureContext:
             return writeStatus
         }
 
-        if !didReportFirstBuffer {
+        let firstAcceptedAt: ContinuousClock.Instant? =
+            didReportFirstBuffer ? nil : .now
+        liveAudio?.append(inputBuffer)
+        if let firstAcceptedAt {
             didReportFirstBuffer = true
-            onFirstBuffer(sessionIdentifier)
+            onFirstBuffer(sessionIdentifier, firstAcceptedAt)
         }
         return noErr
     }
@@ -955,9 +980,14 @@ nonisolated private final class CoreAudioCaptureContext:
         }
 
         var wasDisposed = true
+        var audioStoppedAt: ContinuousClock.Instant?
         if let audioUnit {
             if isStarted {
-                recordTeardown(AudioOutputUnitStop(audioUnit))
+                let status = AudioOutputUnitStop(audioUnit)
+                if status == noErr {
+                    audioStoppedAt = .now
+                }
+                recordTeardown(status)
                 isStarted = false
             }
             if isInitialized {
@@ -969,12 +999,22 @@ nonisolated private final class CoreAudioCaptureContext:
             wasDisposed = disposeStatus == noErr
             self.audioUnit = nil
         }
+        if wasDisposed, audioStoppedAt != nil {
+            liveAudio?.finish()
+        } else {
+            liveAudio?.abort()
+        }
+        let writerClosingAt = ContinuousClock.now
+        let writerFinalizationStatus = writer.finish()
         return CaptureFinalizationResult(
             audioUnitTeardown: AudioUnitTeardownResult(
                 failureCount: teardownFailureCount,
                 wasDisposed: wasDisposed
             ),
-            writerFinalizationStatus: writer.finish()
+            audioStoppedAt: audioStoppedAt,
+            writerFinalizationStatus: writerFinalizationStatus,
+            writerClosingAt: writerClosingAt,
+            writerClosedAt: .now
         )
     }
 
@@ -983,6 +1023,7 @@ nonisolated private final class CoreAudioCaptureContext:
             return
         }
         didReportWriteFailure = true
+        liveAudio?.abort()
         onWriteFailure(sessionIdentifier)
     }
 
@@ -995,7 +1036,10 @@ nonisolated private final class CoreAudioCaptureContext:
 
 nonisolated private struct CaptureFinalizationResult: Sendable {
     let audioUnitTeardown: AudioUnitTeardownResult
+    let audioStoppedAt: ContinuousClock.Instant?
     let writerFinalizationStatus: OSStatus
+    let writerClosingAt: ContinuousClock.Instant
+    let writerClosedAt: ContinuousClock.Instant
 }
 
 nonisolated private struct AudioUnitTeardownResult: Sendable {

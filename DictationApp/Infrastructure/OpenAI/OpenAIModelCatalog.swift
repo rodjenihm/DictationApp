@@ -17,29 +17,29 @@ struct ProviderLanguage: Identifiable, Hashable {
 }
 
 enum OpenAIModelCatalog {
+    nonisolated static let defaultTranscriptionModelID = "gpt-transcribe"
+    static let defaultPostProcessingModelID = lunaModelID
+    private static let lunaModelID = "gpt-6-luna"
+    private static let terraModelID = "gpt-6.1-terra"
+
     static let transcriptionModels = [
         ProviderModel(
-            id: "gpt-4o-transcribe",
-            displayName: "GPT-4o Transcribe",
-            detail: "Higher accuracy"
-        ),
-        ProviderModel(
-            id: "gpt-4o-mini-transcribe",
-            displayName: "GPT-4o Mini Transcribe",
-            detail: "Faster and lower cost"
+            id: defaultTranscriptionModelID,
+            displayName: "GPT-Transcribe",
+            detail: nil
         ),
     ]
 
     static let postProcessingModels = [
         ProviderModel(
-            id: "gpt-5-mini",
-            displayName: "GPT-5 mini",
-            detail: "Recommended"
+            id: defaultPostProcessingModelID,
+            displayName: "GPT-6 Luna",
+            detail: "Fast (2× cost)"
         ),
         ProviderModel(
-            id: "gpt-5-nano",
-            displayName: "GPT-5 nano",
-            detail: "Faster and lower cost"
+            id: terraModelID,
+            displayName: "GPT-6.1 Terra",
+            detail: nil
         ),
     ]
 
@@ -147,5 +147,46 @@ enum OpenAIModelCatalog {
         case .custom(let identifier):
             identifier.isEmpty ? nil : identifier
         }
+    }
+
+    static func postProcessingReasoningEffort(for model: String) -> String {
+        switch model {
+        case lunaModelID, terraModelID:
+            "none"
+        default:
+            "minimal"
+        }
+    }
+
+    static func postProcessingServiceTier(
+        for model: String
+    ) -> OpenAICleanupPayload.ServiceTier? {
+        model == lunaModelID ? .fast : nil
+    }
+
+    static func migratingCuratedModels(
+        in savedConfiguration: AppConfiguration
+    ) -> AppConfiguration {
+        var configuration = savedConfiguration
+        switch configuration.transcription.modelsByProvider[.openAI] {
+        case .curated("gpt-4o-transcribe"), .curated("gpt-4o-mini-transcribe"):
+            configuration.transcription.setModel(
+                .curated(defaultTranscriptionModelID),
+                for: .openAI
+            )
+        default:
+            break
+        }
+
+        switch configuration.postProcessing.modelsByProvider[.openAI] {
+        case .curated("gpt-5-mini"), .curated("gpt-5-nano"):
+            configuration.postProcessing.setModel(
+                .curated(defaultPostProcessingModelID),
+                for: .openAI
+            )
+        default:
+            break
+        }
+        return configuration
     }
 }

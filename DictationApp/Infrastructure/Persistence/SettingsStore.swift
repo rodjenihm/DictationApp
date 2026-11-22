@@ -33,7 +33,7 @@ final class SettingsStore {
             let data = defaults.data(forKey: Key.configuration),
             let decoded = try? decoder.decode(AppConfiguration.self, from: data)
         {
-            configuration = decoded
+            configuration = OpenAIModelCatalog.migratingCuratedModels(in: decoded)
         } else {
             configuration = .default
         }

@@ -170,8 +170,8 @@ final class AppModel: ObservableObject {
                     self?.refreshStatus()
                 }
             }
-        shortcutService.onShortcutPressed = { [weak self] in
-            self?.performPrimaryAction()
+        shortcutService.onShortcutPressed = { [weak self] receivedAt in
+            self?.performPrimaryAction(receivedAt: receivedAt)
         }
         shortcutService.onSessionCancellationShortcutPressed = {
             [weak self] in
@@ -240,12 +240,15 @@ final class AppModel: ObservableObject {
         AppLog.lifecycle.notice("Application shutdown cleanup finished")
     }
 
-    func performPrimaryAction() {
+    func performPrimaryAction(receivedAt: ContinuousClock.Instant = .now) {
         switch dictationCoordinator.state {
         case .idle:
-            startDictation()
+            startDictation(receivedAt: receivedAt)
+        case .rawTranscriptFallback:
+            dictationCoordinator.dismissDeliveryStatus()
+            startDictation(receivedAt: receivedAt)
         case .recording:
-            dictationCoordinator.stop()
+            dictationCoordinator.stop(receivedAt: receivedAt)
         case
             .preparing,
             .finalizing,
@@ -256,7 +259,6 @@ final class AppModel: ObservableObject {
             .inserted,
             .insertionUnverified,
             .clipboardFallback,
-            .rawTranscriptFallback,
             .noSpeech,
             .transcriptionFailed,
             .captureFailed,
@@ -295,7 +297,7 @@ final class AppModel: ObservableObject {
         NSApp.terminate(nil)
     }
 
-    private func startDictation() {
+    private func startDictation(receivedAt: ContinuousClock.Instant) {
         guard !configurationViewModel.isValidating else {
             AppLog.session.notice(
                 "Dictation start blocked by configuration validation"
@@ -353,7 +355,8 @@ final class AppModel: ObservableObject {
                 configuration: configuration,
                 recordingProfile: .completedM4A
             ),
-            soundCuesEnabled: storedSettings.soundCuesEnabled
+            soundCuesEnabled: storedSettings.soundCuesEnabled,
+            receivedAt: receivedAt
         )
         AppLog.session.info("Dictation start accepted")
     }
@@ -523,7 +526,7 @@ final class AppModel: ObservableObject {
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = message
             primaryActionTitle = "Start Dictation"
-            isPrimaryActionEnabled = false
+            isPrimaryActionEnabled = true
             canCancel = false
             overlayWindowController.present(
                 .rawTranscriptFallback(message: message)

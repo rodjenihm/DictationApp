@@ -5,132 +5,62 @@ import OSLog
 
 @MainActor
 final class AccessibilityTextInsertionService: TextInsertionServicing {
+    private let clock = ContinuousClock()
+    private let messagingTimeout: Float = 1
     private let pasteConsumptionDelay = Duration.milliseconds(200)
     private let pasteVerificationRetryDelay = Duration.milliseconds(100)
     private let pasteVerificationAttemptCount = 3
-    private let clipboardRestorationDelay = Duration.milliseconds(250)
+    private let clipboardHoldDuration = Duration.milliseconds(250)
+    private let placeholderInspectionDuration = Duration.milliseconds(100)
+    private let placeholderInspectionDepth = 4
+    private let placeholderInspectionNodeLimit = 24
+
+    private struct Target {
+        let element: AXUIElement
+        let value: String?
+        let selectedRange: NSRange?
+    }
+
+    private enum TargetProbeFailure: Error {
+        case unavailable
+        case messagingFailed
+    }
 
     func insert(
         _ text: String,
-        using clipboardTransaction: any ClipboardTransactionHandling
+        using clipboardTransaction: any ClipboardTransactionHandling,
+        sessionID: UUID,
+        onPasteDispatched: (ContinuousClock.Instant) -> Void
     ) async -> TextInsertionOutcome {
-        guard !Task.isCancelled else {
-            AppLog.insertion.notice(
-                "Insertion skipped because the task was cancelled"
-            )
-            return .failed
-        }
-
-        guard AXIsProcessTrusted() else {
-            AppLog.insertion.notice(
-                "Insertion unavailable because Accessibility is not trusted"
-            )
-            return .failed
-        }
-
-        let systemWideElement = AXUIElementCreateSystemWide()
-        guard let focusedElement = focusedElement(from: systemWideElement)
-        else {
-            AppLog.insertion.notice(
-                "Insertion unavailable because no focused element exists"
-            )
-            return .failed
-        }
-
-        guard !Task.isCancelled else {
-            return .failed
-        }
-
-        var isSettable = DarwinBoolean(false)
-        let settableResult = AXUIElementIsAttributeSettable(
-            focusedElement,
-            kAXSelectedTextAttribute as CFString,
-            &isSettable
-        )
-        guard !Task.isCancelled else {
-            return .failed
-        }
-        guard
-            settableResult == .success,
-            isSettable.boolValue
-        else {
-            AppLog.insertion.notice(
-                "Insertion unavailable because focused text is not writable"
-            )
-            return .failed
-        }
-
-        let exposedTargetValue = stringAttribute(
-            kAXValueAttribute,
-            from: focusedElement
-        )
-        guard !Task.isCancelled else {
-            return .failed
-        }
-
-        let placeholderValue = stringAttribute(
-            kAXPlaceholderValueAttribute,
-            from: focusedElement
-        )
-        guard !Task.isCancelled else {
-            return .failed
-        }
-
-        let descriptionValue = stringAttribute(
-            kAXDescriptionAttribute,
-            from: focusedElement
-        )
-        guard !Task.isCancelled else {
-            return .failed
-        }
-
-        let exposesDescriptionAsEmptyContent =
-            descriptionValue.map {
-                !$0.isEmpty
-                    && exposedTargetValue != $0
-                    && containsStaticText(
-                        matching: $0,
-                        in: focusedElement,
-                        remainingDepth: 4
-                    )
+        let target: Target
+        do {
+            let startedAt = clock.now
+            defer {
+                AppLog.recordLatency(
+                    "accessibility_preparation",
+                    since: startedAt,
+                    sessionID: sessionID
+                )
             }
-            ?? false
-        guard !Task.isCancelled else {
+            target = try prepareTarget()
+        } catch TargetProbeFailure.messagingFailed {
+            AppLog.insertion.notice(
+                "Accessibility messaging failed before paste dispatch"
+            )
             return .failed
-        }
-
-        let targetValue: String?
-        if
-            (
-                placeholderValue != nil
-                    && exposedTargetValue == placeholderValue
-            )
-                || exposesDescriptionAsEmptyContent
-        {
-            targetValue = ""
-            AppLog.insertion.info(
-                "Focused editor exposed semantic placeholder content and was treated as empty"
-            )
-        } else {
-            targetValue = exposedTargetValue
-        }
-
-        let selectedRange = selectedTextRange(from: focusedElement)
-        guard !Task.isCancelled else {
+        } catch {
             return .failed
         }
 
         let insertedText = TextInsertionBoundaryPolicy.preparedText(
             text,
-            targetValue: targetValue,
-            selectedRange: selectedRange
-        )
-        let expectedValue = TextInsertionBoundaryPolicy.expectedValue(
-            replacing: selectedRange,
-            in: targetValue,
-            with: insertedText
+            targetValue: target.value,
+            selectedRange: target.selectedRange
         )
 
+        guard !Task.isCancelled else {
+            return .failed
+        }
         guard clipboardTransaction.isStillOwned else {
             AppLog.insertion.notice(
                 "Insertion stopped because clipboard ownership was lost"
@@ -142,16 +72,19 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             insertedText != text,
             !clipboardTransaction.replaceOwnedContents(with: insertedText)
         {
+            if !Task.isCancelled {
+                _ = clipboardTransaction.replaceOwnedContents(with: text)
+            }
             AppLog.insertion.notice(
                 "Insertion stopped while preparing boundary spacing"
             )
             return .failed
         }
 
-        guard
-            !Task.isCancelled,
-            postPasteShortcut(to: focusedElement)
-        else {
+        guard !Task.isCancelled else {
+            return .failed
+        }
+        guard postPasteShortcut(to: target.element) else {
             if insertedText != text {
                 _ = clipboardTransaction.replaceOwnedContents(with: text)
             }
@@ -161,39 +94,39 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             return .failed
         }
 
-        clipboardTransaction.holdRestoration(
-            for: clipboardRestorationDelay
-        )
+        let pasteDispatchedAt = clock.now
+        clipboardTransaction.holdRestoration(for: clipboardHoldDuration)
+        onPasteDispatched(pasteDispatchedAt)
+
         let isConfirmed: Bool
         do {
+            defer {
+                AppLog.recordLatency(
+                    "accessibility_verification",
+                    since: pasteDispatchedAt,
+                    sessionID: sessionID
+                )
+            }
             isConfirmed = try await confirmInsertion(
-                expectedValue: expectedValue,
-                selectedRange: selectedRange,
-                insertedText: insertedText,
-                in: focusedElement
+                target: target,
+                insertedText: insertedText
             )
         } catch is CancellationError {
             AppLog.insertion.notice(
                 "Insertion verification cancelled after paste dispatch"
             )
             return .failed
+        } catch TargetProbeFailure.messagingFailed {
+            AppLog.insertion.notice(
+                "Accessibility messaging failed after paste dispatch"
+            )
+            isConfirmed = false
         } catch {
-            return .failed
+            isConfirmed = false
         }
 
         guard !Task.isCancelled else {
             return .failed
-        }
-
-        if insertedText != text {
-            _ = clipboardTransaction.replaceOwnedContents(with: text)
-        }
-
-        guard expectedValue != nil else {
-            AppLog.insertion.info(
-                "Insertion completed without a verifiable target value"
-            )
-            return .unverified
         }
 
         if isConfirmed {
@@ -201,8 +134,117 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             return .confirmed
         }
 
+        if insertedText != text {
+            let consumptionDeadline = pasteDispatchedAt.advanced(
+                by: clipboardHoldDuration
+            )
+            do {
+                try await clock.sleep(until: consumptionDeadline)
+                try Task.checkCancellation()
+            } catch {
+                return .failed
+            }
+            _ = clipboardTransaction.replaceOwnedContents(with: text)
+        }
+
         AppLog.insertion.info("Insertion remained unverified")
         return .unverified
+    }
+
+    private func prepareTarget() throws -> Target {
+        try Task.checkCancellation()
+        guard AXIsProcessTrusted() else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because Accessibility is not trusted"
+            )
+            throw TargetProbeFailure.unavailable
+        }
+
+        let systemWideElement = AXUIElementCreateSystemWide()
+        // The system-wide element applies this limit to all AX messaging
+        // from this process, including requests to focused elements and children.
+        guard AXUIElementSetMessagingTimeout(
+            systemWideElement,
+            messagingTimeout
+        ) == .success else {
+            throw TargetProbeFailure.messagingFailed
+        }
+
+        guard
+            let focusedElement = try attributeValue(
+                kAXFocusedUIElementAttribute,
+                from: systemWideElement
+            ),
+            CFGetTypeID(focusedElement) == AXUIElementGetTypeID()
+        else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because no focused element exists"
+            )
+            throw TargetProbeFailure.unavailable
+        }
+        let element = unsafeBitCast(focusedElement, to: AXUIElement.self)
+
+        try Task.checkCancellation()
+        var isSettable = DarwinBoolean(false)
+        let settableResult = AXUIElementIsAttributeSettable(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            &isSettable
+        )
+        guard try isSuccessful(settableResult), isSettable.boolValue else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because focused text is not writable"
+            )
+            throw TargetProbeFailure.unavailable
+        }
+
+        guard let selectedRange = try selectedTextRange(from: element) else {
+            return Target(element: element, value: nil, selectedRange: nil)
+        }
+        return Target(
+            element: element,
+            value: try targetValue(from: element),
+            selectedRange: selectedRange
+        )
+    }
+
+    private func targetValue(from element: AXUIElement) throws -> String? {
+        let value = try stringAttribute(kAXValueAttribute, from: element)
+        if value == "" {
+            return value
+        }
+
+        if
+            let placeholder = try stringAttribute(
+                kAXPlaceholderValueAttribute,
+                from: element
+            ),
+            value == placeholder
+        {
+            return ""
+        }
+
+        if
+            let description = try stringAttribute(
+                kAXDescriptionAttribute,
+                from: element
+            ),
+            !description.isEmpty,
+            value != description
+        {
+            var remainingNodes = placeholderInspectionNodeLimit
+            if try containsStaticText(
+                matching: description,
+                in: element,
+                remainingDepth: placeholderInspectionDepth,
+                remainingNodes: &remainingNodes,
+                deadline: clock.now.advanced(by: placeholderInspectionDuration)
+            ) {
+                return ""
+            }
+        }
+
+        return value
     }
 
     private func postPasteShortcut(
@@ -241,61 +283,60 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
     }
 
     private func confirmInsertion(
-        expectedValue: String?,
-        selectedRange: NSRange?,
-        insertedText: String,
-        in focusedElement: AXUIElement
+        target: Target,
+        insertedText: String
     ) async throws -> Bool {
+        guard let selectedRange = target.selectedRange else {
+            return false
+        }
+
         try await Task.sleep(for: pasteConsumptionDelay)
 
-        for attempt in 0..<pasteVerificationAttemptCount {
-            try Task.checkCancellation()
+        let expectedValue = TextInsertionBoundaryPolicy.expectedValue(
+            replacing: selectedRange,
+            in: target.value,
+            with: insertedText
+        )
+        let insertedRange = insertedTextRange(
+            from: selectedRange,
+            insertedText: insertedText
+        )
 
-            let actualValue = stringAttribute(
-                kAXValueAttribute,
-                from: focusedElement
-            )
+        for attempt in 0..<pasteVerificationAttemptCount {
             if
                 let expectedValue,
                 valuesMatchForVerification(
-                    actualValue,
+                    try stringAttribute(
+                        kAXValueAttribute,
+                        from: target.element
+                    ),
                     expectedValue: expectedValue
                 )
             {
                 return true
             }
 
-            if
-                let insertedRange = insertedTextRange(
-                    from: selectedRange,
-                    insertedText: insertedText
-                ),
-                valuesMatchForVerification(
-                    stringForRange(
-                        insertedRange,
-                        from: focusedElement
-                    ),
+            if let insertedRange {
+                if valuesMatchForVerification(
+                    try stringForRange(insertedRange, from: target.element),
                     expectedValue: insertedText
-                )
-            {
-                AppLog.insertion.info(
-                    "Insertion confirmed from inserted-range readback"
-                )
-                return true
-            }
+                ) {
+                    AppLog.insertion.info(
+                        "Insertion confirmed from inserted-range readback"
+                    )
+                    return true
+                }
 
-            let actualSelectedRange = selectedTextRange(
-                from: focusedElement
-            )
-            if caretConfirmsInsertion(
-                from: selectedRange,
-                to: actualSelectedRange,
-                insertedText: insertedText
-            ) {
-                AppLog.insertion.info(
-                    "Insertion confirmed from caret advancement"
-                )
-                return true
+                if
+                    let actualRange = try selectedTextRange(from: target.element),
+                    actualRange.length == 0,
+                    actualRange.location == NSMaxRange(insertedRange)
+                {
+                    AppLog.insertion.info(
+                        "Insertion confirmed from caret advancement"
+                    )
+                    return true
+                }
             }
 
             guard attempt + 1 < pasteVerificationAttemptCount else {
@@ -308,47 +349,21 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
     }
 
     private func insertedTextRange(
-        from originalRange: NSRange?,
+        from originalRange: NSRange,
         insertedText: String
     ) -> NSRange? {
+        let insertedLength = insertedText.utf16.count
         guard
-            let originalRange,
-            originalRange.location >= 0,
-            originalRange.location != NSNotFound,
-            !insertedText.isEmpty,
-            insertedText.utf16.count
-                <= Int.max - originalRange.location
+            insertedLength > 0,
+            insertedLength <= Int.max - originalRange.location
         else {
             return nil
         }
 
         return NSRange(
             location: originalRange.location,
-            length: insertedText.utf16.count
+            length: insertedLength
         )
-    }
-
-    private func caretConfirmsInsertion(
-        from originalRange: NSRange?,
-        to actualRange: NSRange?,
-        insertedText: String
-    ) -> Bool {
-        guard
-            let originalRange,
-            let actualRange,
-            originalRange.location >= 0,
-            originalRange.location != NSNotFound,
-            actualRange.location >= 0,
-            actualRange.length == 0,
-            !insertedText.isEmpty,
-            insertedText.utf16.count
-                <= Int.max - originalRange.location
-        else {
-            return false
-        }
-
-        return actualRange.location
-            == originalRange.location + insertedText.utf16.count
     }
 
     private func valuesMatchForVerification(
@@ -371,95 +386,78 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         value.replacingOccurrences(of: "\u{00A0}", with: " ")
     }
 
-    private func focusedElement(
-        from systemWideElement: AXUIElement
-    ) -> AXUIElement? {
+    private func attributeValue(
+        _ attribute: String,
+        from element: AXUIElement
+    ) throws -> CFTypeRef? {
+        try Task.checkCancellation()
         var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                systemWideElement,
-                kAXFocusedUIElementAttribute as CFString,
-                &value
-            ) == .success,
-            let value,
-            CFGetTypeID(value) == AXUIElementGetTypeID()
-        else {
-            return nil
-        }
-
-        return unsafeBitCast(value, to: AXUIElement.self)
+        let result = AXUIElementCopyAttributeValue(
+            element,
+            attribute as CFString,
+            &value
+        )
+        return try isSuccessful(result) ? value : nil
     }
 
     private func stringAttribute(
         _ attribute: String,
         from element: AXUIElement
-    ) -> String? {
-        var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                element,
-                attribute as CFString,
-                &value
-            ) == .success
-        else {
-            return nil
-        }
-
-        return value as? String
+    ) throws -> String? {
+        try attributeValue(attribute, from: element) as? String
     }
 
     private func containsStaticText(
         matching expectedValue: String,
         in element: AXUIElement,
-        remainingDepth: Int
-    ) -> Bool {
-        guard !Task.isCancelled else {
+        remainingDepth: Int,
+        remainingNodes: inout Int,
+        deadline: ContinuousClock.Instant
+    ) throws -> Bool {
+        guard remainingNodes > 0, clock.now < deadline else {
             return false
         }
+        remainingNodes -= 1
 
         if
-            stringAttribute(
-                kAXRoleAttribute,
-                from: element
-            ) == kAXStaticTextRole as String,
-            stringAttribute(
-                kAXValueAttribute,
-                from: element
-            ) == expectedValue
+            try stringAttribute(kAXRoleAttribute, from: element)
+                == kAXStaticTextRole as String,
+            clock.now < deadline,
+            try stringAttribute(kAXValueAttribute, from: element) == expectedValue
         {
             return true
         }
 
-        guard remainingDepth > 0 else {
+        guard remainingDepth > 0, remainingNodes > 0, clock.now < deadline else {
             return false
         }
 
-        return elementArrayAttribute(
-            kAXChildrenAttribute,
-            from: element
-        )
-        .contains {
-            containsStaticText(
+        let children = try childElements(of: element, limit: remainingNodes)
+        return try children.contains { child in
+            try containsStaticText(
                 matching: expectedValue,
-                in: $0,
-                remainingDepth: remainingDepth - 1
+                in: child,
+                remainingDepth: remainingDepth - 1,
+                remainingNodes: &remainingNodes,
+                deadline: deadline
             )
         }
     }
 
-    private func elementArrayAttribute(
-        _ attribute: String,
-        from element: AXUIElement
-    ) -> [AXUIElement] {
-        var value: CFTypeRef?
-        guard
-            AXUIElementCopyAttributeValue(
-                element,
-                attribute as CFString,
-                &value
-            ) == .success,
-            let values = value as? [AnyObject]
-        else {
+    private func childElements(
+        of element: AXUIElement,
+        limit: Int
+    ) throws -> [AXUIElement] {
+        try Task.checkCancellation()
+        var value: CFArray?
+        let result = AXUIElementCopyAttributeValues(
+            element,
+            kAXChildrenAttribute as CFString,
+            0,
+            limit,
+            &value
+        )
+        guard try isSuccessful(result), let values = value as? [AnyObject] else {
             return []
         }
 
@@ -473,15 +471,12 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
 
     private func selectedTextRange(
         from element: AXUIElement
-    ) -> NSRange? {
-        var value: CFTypeRef?
+    ) throws -> NSRange? {
         guard
-            AXUIElementCopyAttributeValue(
-                element,
-                kAXSelectedTextRangeAttribute as CFString,
-                &value
-            ) == .success,
-            let value,
+            let value = try attributeValue(
+                kAXSelectedTextRangeAttribute,
+                from: element
+            ),
             CFGetTypeID(value) == AXValueGetTypeID()
         else {
             return nil
@@ -493,7 +488,12 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         var range = CFRange()
-        guard AXValueGetValue(axValue, .cfRange, &range) else {
+        guard
+            AXValueGetValue(axValue, .cfRange, &range),
+            range.location >= 0,
+            range.location != NSNotFound,
+            range.length >= 0
+        else {
             return nil
         }
 
@@ -503,7 +503,7 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
     private func stringForRange(
         _ range: NSRange,
         from element: AXUIElement
-    ) -> String? {
+    ) throws -> String? {
         var cfRange = CFRange(
             location: range.location,
             length: range.length
@@ -512,18 +512,26 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             return nil
         }
 
+        try Task.checkCancellation()
         var value: CFTypeRef?
-        guard
-            AXUIElementCopyParameterizedAttributeValue(
-                element,
-                kAXStringForRangeParameterizedAttribute as CFString,
-                rangeValue,
-                &value
-            ) == .success
-        else {
-            return nil
-        }
+        let result = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXStringForRangeParameterizedAttribute as CFString,
+            rangeValue,
+            &value
+        )
+        return try isSuccessful(result) ? value as? String : nil
+    }
 
-        return value as? String
+    private func isSuccessful(_ result: AXError) throws -> Bool {
+        try Task.checkCancellation()
+        switch result {
+        case .success:
+            return true
+        case .cannotComplete, .invalidUIElement, .apiDisabled, .failure:
+            throw TargetProbeFailure.messagingFailed
+        default:
+            return false
+        }
     }
 }

@@ -22,13 +22,15 @@ protocol ClipboardTransactionHandling: AnyObject {
 @MainActor
 protocol TranscriptClipboardServicing {
     func beginTransaction(
-        replacingContentsWith transcript: String
+        replacingContentsWith transcript: String,
+        sessionID: UUID
     ) -> any ClipboardTransactionHandling
 }
 
 @MainActor
 final class ClipboardTransaction: ClipboardTransactionHandling {
     private let pasteboard: NSPasteboard
+    private let sessionID: UUID
     private let clock = ContinuousClock()
     private var ownedChangeCount: Int
     private var snapshot: ClipboardSnapshot?
@@ -37,9 +39,11 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
 
     init(
         pasteboard: NSPasteboard,
-        replacement: String
+        replacement: String,
+        sessionID: UUID
     ) {
         self.pasteboard = pasteboard
+        self.sessionID = sessionID
         snapshot = ClipboardSnapshot.materialize(from: pasteboard)
 
         pasteboard.clearContents()
@@ -103,6 +107,14 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
             return false
         }
 
+        let startedAt = clock.now
+        defer {
+            AppLog.recordLatency(
+                "clipboard_restore",
+                since: startedAt,
+                sessionID: sessionID
+            )
+        }
         pasteboard.clearContents()
 
         let restoredItems: [NSPasteboardItem] =
@@ -166,11 +178,13 @@ final class PasteboardClipboardService: TranscriptClipboardServicing {
     }
 
     func beginTransaction(
-        replacingContentsWith transcript: String
+        replacingContentsWith transcript: String,
+        sessionID: UUID
     ) -> any ClipboardTransactionHandling {
         ClipboardTransaction(
             pasteboard: pasteboard,
-            replacement: transcript
+            replacement: transcript,
+            sessionID: sessionID
         )
     }
 }

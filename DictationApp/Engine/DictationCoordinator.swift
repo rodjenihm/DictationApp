@@ -29,7 +29,7 @@ final class DictationCoordinator: ObservableObject {
     private var activeTextPayload: SessionTextPayload?
     private var pendingCancellationCue:
         (sessionIdentifier: UUID, enabled: Bool)?
-    private var preparationStartedAt: TimeInterval?
+    private var stopRequestedAt: ContinuousClock.Instant?
 
     init(
         recorder: any AudioRecorder,
@@ -67,7 +67,7 @@ final class DictationCoordinator: ObservableObject {
 
     var acceptsToggle: Bool {
         switch state {
-        case .idle, .recording:
+        case .idle, .recording, .rawTranscriptFallback:
             true
         case
             .preparing,
@@ -79,7 +79,6 @@ final class DictationCoordinator: ObservableObject {
             .inserted,
             .insertionUnverified,
             .clipboardFallback,
-            .rawTranscriptFallback,
             .noSpeech,
             .transcriptionFailed,
             .captureFailed,
@@ -131,7 +130,8 @@ final class DictationCoordinator: ObservableObject {
 
     func start(
         configuration: SessionConfiguration,
-        soundCuesEnabled: Bool
+        soundCuesEnabled: Bool,
+        receivedAt: ContinuousClock.Instant = .now
     ) {
         guard state == .idle, currentToken == nil else {
             return
@@ -151,7 +151,14 @@ final class DictationCoordinator: ObservableObject {
         failedSessionContext = nil
         activeClipboardTransaction = nil
         activeTextPayload = SessionTextPayload()
-        preparationStartedAt = ProcessInfo.processInfo.systemUptime
+        stopRequestedAt = nil
+        let acceptedAt = clock.now
+        AppLog.recordLatency(
+            "start_action_to_acceptance",
+            since: receivedAt,
+            sessionID: token.id,
+            until: acceptedAt
+        )
 
         guard transition(to: .preparing(configuration), token: token)
         else {
@@ -168,16 +175,19 @@ final class DictationCoordinator: ObservableObject {
                 token: token,
                 configuration: configuration,
                 soundCuesEnabled: soundCuesEnabled,
+                receivedAt: receivedAt,
+                acceptedAt: acceptedAt,
                 events: events,
                 eventContinuation: continuation
             )
         }
     }
 
-    func stop() {
-        guard case .recording = state else {
+    func stop(receivedAt: ContinuousClock.Instant = .now) {
+        guard case .recording = state, stopRequestedAt == nil else {
             return
         }
+        stopRequestedAt = receivedAt
         submit(.stop(.stopped))
     }
 
@@ -221,7 +231,7 @@ final class DictationCoordinator: ObservableObject {
 
     func dismissDeliveryStatus() {
         switch state {
-        case .insertionUnverified, .clipboardFallback:
+        case .insertionUnverified, .clipboardFallback, .rawTranscriptFallback:
             completeCurrentSessionWithoutCue()
         default:
             return
@@ -250,10 +260,15 @@ final class DictationCoordinator: ObservableObject {
         token: SessionToken,
         configuration: SessionConfiguration,
         soundCuesEnabled: Bool,
+        receivedAt: ContinuousClock.Instant,
+        acceptedAt: ContinuousClock.Instant,
         events: AsyncStream<PipelineEvent>,
         eventContinuation:
             AsyncStream<PipelineEvent>.Continuation
     ) async {
+        var liveSession: LiveTranscriptionSession?
+        defer { liveSession?.cancel() }
+
         do {
             try await ensureMicrophonePermission()
             try requireCurrent(token)
@@ -262,23 +277,48 @@ final class DictationCoordinator: ObservableObject {
                 .recordingStarted,
                 enabled: soundCuesEnabled
             )
+            let liveProvider = providerResolver.transcriptionProvider(
+                for: configuration.transcriptionProvider
+            ) as? any LiveTranscriptionProvider
             let prepared = try await recorder.prepare(
                 profile: configuration.recordingProfile,
                 audioInputPreference:
                     configuration.audioInputPreference,
-                sessionIdentifier: token.id
+                sessionIdentifier: token.id,
+                includeLiveAudio:
+                    liveProvider?.supportsLiveTranscription(
+                        for: configuration.language
+                    ) == true
             )
             try requireCurrent(token)
 
-            try await recorder.startPreparedRecording()
+            if let liveProvider, let liveAudio = prepared.liveAudio {
+                liveSession = liveProvider.startLiveTranscription(
+                    audio: liveAudio,
+                    language: configuration.language
+                )
+            }
+            let firstAudioAt = try await recorder.startPreparedRecording()
             try requireCurrent(token)
 
+            AppLog.recordLatency(
+                "start_action_to_first_audio",
+                since: receivedAt,
+                sessionID: token.id,
+                until: firstAudioAt
+            )
+            AppLog.recordLatency(
+                "accepted_start_to_first_audio",
+                since: acceptedAt,
+                sessionID: token.id,
+                until: firstAudioAt
+            )
             let activeSession = ActiveSession(
                 token: token,
                 configuration: configuration,
                 inputDeviceName: prepared.inputDeviceName,
                 isUsingFallback: prepared.isUsingFallback,
-                startedAt: clock.now,
+                startedAt: firstAudioAt,
                 soundCuesEnabled: soundCuesEnabled
             )
 
@@ -288,17 +328,11 @@ final class DictationCoordinator: ObservableObject {
             ) else {
                 throw CancellationError()
             }
-            if let preparationStartedAt {
-                let elapsedMilliseconds = Int(
-                    (
-                        ProcessInfo.processInfo.systemUptime
-                            - preparationStartedAt
-                    ) * 1_000
-                )
-                AppLog.capture.info(
-                    "Accepted start reached recording in \(elapsedMilliseconds, privacy: .public) ms"
-                )
-            }
+            AppLog.recordLatency(
+                "accepted_start_to_recording",
+                since: acceptedAt,
+                sessionID: token.id
+            )
 
             let recordingEvent = try await waitForRecordingEvent(
                 events,
@@ -315,6 +349,7 @@ final class DictationCoordinator: ObservableObject {
                     reason: reason
                 )
             case .unexpectedCapture(let outcome):
+                liveSession?.cancel()
                 capturedSession = try await handleUnexpectedCapture(
                     outcome,
                     activeSession: activeSession
@@ -344,7 +379,8 @@ final class DictationCoordinator: ObservableObject {
             case .ready(let session):
                 try await runTranscriptionLoop(
                     session,
-                    events: events
+                    events: events,
+                    liveSession: liveSession
                 )
             }
 
@@ -352,6 +388,7 @@ final class DictationCoordinator: ObservableObject {
         } catch is CancellationError {
             // Explicit cancellation invalidates the token and owns cleanup.
         } catch {
+            liveSession?.cancel()
             guard isCurrent(token) else {
                 return
             }
@@ -408,7 +445,7 @@ final class DictationCoordinator: ObservableObject {
                 case .elapsed(let elapsed):
                     guard
                         isCurrent(activeSession.token),
-                        case .recording = state
+                        case .recording(let recording) = state
                     else {
                         recordingResult = nil
                         break
@@ -417,10 +454,18 @@ final class DictationCoordinator: ObservableObject {
                     let profile =
                         activeSession.configuration.recordingProfile
                     if elapsed >= profile.maximumDuration {
+                        stopRequestedAt = stopRequestedAt ?? clock.now
                         recordingResult = .stop(.automaticLimit)
                         break
                     }
 
+                    guard
+                        elapsed.rounded(.down) != recording.elapsed.rounded(.down)
+                            || (elapsed >= profile.warningDuration)
+                                != recording.isNearDurationLimit
+                    else {
+                        continue
+                    }
                     _ = transition(
                         to: recordingState(
                             for: activeSession,
@@ -472,6 +517,13 @@ final class DictationCoordinator: ObservableObject {
         }
         try Task.checkCancellation()
         ownedArtifactURL = artifact.url
+        if let stopRequestedAt {
+            AppLog.recordLatency(
+                "stop_to_validated_artifact",
+                since: stopRequestedAt,
+                sessionID: activeSession.token.id
+            )
+        }
 
         soundCuePlayer.enqueue(
             .recordingStopped,
@@ -601,16 +653,24 @@ final class DictationCoordinator: ObservableObject {
 
     private func runTranscriptionLoop(
         _ initialSession: FailedSessionContext,
-        events: AsyncStream<PipelineEvent>
+        events: AsyncStream<PipelineEvent>,
+        liveSession: LiveTranscriptionSession? = nil
     ) async throws {
         var session = initialSession
         let token = SessionToken(id: session.identifier)
+        var firstLiveAttempt = liveSession
 
         while true {
             try requireCurrent(token)
 
             do {
-                try await transcribeAndDeliver(session, token: token)
+                let liveAttempt = firstLiveAttempt
+                firstLiveAttempt = nil
+                try await transcribeAndDeliver(
+                    session,
+                    liveSession: liveAttempt,
+                    token: token
+                )
                 return
             } catch is CancellationError {
                 throw CancellationError()
@@ -657,6 +717,7 @@ final class DictationCoordinator: ObservableObject {
 
     private func transcribeAndDeliver(
         _ session: FailedSessionContext,
+        liveSession: LiveTranscriptionSession?,
         token: SessionToken
     ) async throws {
         guard transition(
@@ -681,17 +742,40 @@ final class DictationCoordinator: ObservableObject {
             )
         }
 
-        let transcript = try await transcriptionProvider.transcribe(
-            TranscriptionRequest(
-                artifact: session.artifact,
-                model:
-                    session.effectiveConfiguration.transcriptionModel,
-                language:
-                    session.effectiveConfiguration.language
+        let transcriptionStartedAt = clock.now
+        let transcript: String
+        if let liveTranscript = await liveSession?.finalTranscript() {
+            transcript = liveTranscript
+            AppLog.recordLatency(
+                "apple_live_transcription_result",
+                since: transcriptionStartedAt,
+                sessionID: token.id
             )
-        )
+        } else {
+            try requireCurrent(token)
+            if liveSession != nil {
+                AppLog.recordLatency(
+                    "apple_live_transcription_file_fallback",
+                    since: transcriptionStartedAt,
+                    sessionID: token.id
+                )
+            }
+            transcript = try await transcriptionProvider.transcribe(
+                TranscriptionRequest(
+                    artifact: session.artifact,
+                    model: session.effectiveConfiguration.transcriptionModel,
+                    language: session.effectiveConfiguration.language,
+                    diagnosticSessionID: token.id
+                )
+            )
+        }
         AppLog.providers.info("Transcription operation succeeded")
         try requireCurrent(token)
+        AppLog.recordLatency(
+            "transcription_to_raw_result",
+            since: transcriptionStartedAt,
+            sessionID: token.id
+        )
 
         deleteOwnedArtifact(session.artifact.url)
         failedSessionContext = nil
@@ -879,31 +963,28 @@ final class DictationCoordinator: ObservableObject {
         ) else {
             throw CancellationError()
         }
-        AppLog.providers.info("Post-processing operation started")
-
+        let cleanupStartedAt = clock.now
+        let extraSeconds = min(8, rawTranscript.utf8.count / 500)
+        let deadline = cleanupStartedAt.advanced(by: .seconds(4 + extraSeconds))
+        let request = PostProcessingRequest(
+            rawTranscript: rawTranscript,
+            model: configuration.postProcessingModel,
+            deadline: deadline,
+            diagnosticSessionID: token.id
+        )
+        let finalText: String
+        let fallbackMessage: String?
         do {
-            let output = try await postProcessingProvider.process(
-                PostProcessingRequest(
-                    rawTranscript: rawTranscript,
-                    model: configuration.postProcessingModel
-                )
+            finalText = try await cleanTranscript(
+                using: postProcessingProvider,
+                request: request,
+                deadline: deadline
             )
-            AppLog.providers.info(
-                "Post-processing operation succeeded"
-            )
-            try requireCurrent(token)
-
-            let validatedOutput =
-                try PostProcessingOutputPolicy.validatedOutput(
-                    output,
-                    rawTranscript: rawTranscript
-                )
-            activeTextPayload?.finalTranscript = validatedOutput
-
-            try await insertTranscript(
-                validatedOutput,
-                rawFallbackMessage: nil,
-                token: token
+            fallbackMessage = nil
+            AppLog.recordLatency(
+                "cleanup_succeeded",
+                since: cleanupStartedAt,
+                sessionID: token.id
             )
         } catch is CancellationError {
             throw CancellationError()
@@ -912,6 +993,11 @@ final class DictationCoordinator: ObservableObject {
                 "Post-processing stopped with classification \(failure.logClassification, privacy: .public)"
             )
             try requireCurrent(token)
+            AppLog.recordLatency(
+                "cleanup_fallback_\(failure.logClassification)",
+                since: cleanupStartedAt,
+                sessionID: token.id
+            )
 
             if failure.isConfigurationFailure {
                 providerRuntimeHealth.markNeedsAttention(
@@ -923,24 +1009,77 @@ final class DictationCoordinator: ObservableObject {
                 )
             }
 
-            try await insertTranscript(
-                rawTranscript,
-                rawFallbackMessage:
-                    "Cleanup was unavailable.",
-                token: token
-            )
+            finalText = rawTranscript
+            fallbackMessage = failure == .deadlineExceeded
+                ? "Cleanup took too long."
+                : "Cleanup was unavailable."
         } catch {
             AppLog.providers.error(
                 "Post-processing stopped with unclassified failure"
             )
-            try requireCurrent(token)
-            try await insertTranscript(
-                rawTranscript,
-                rawFallbackMessage:
-                    "Cleanup was unavailable.",
-                token: token
+            AppLog.recordLatency(
+                "cleanup_fallback_invalid_output",
+                since: cleanupStartedAt,
+                sessionID: token.id
             )
+            finalText = rawTranscript
+            fallbackMessage = "Cleanup was unavailable."
         }
+
+        try await insertTranscript(
+            finalText,
+            rawFallbackMessage: fallbackMessage,
+            token: token
+        )
+    }
+
+    private func cleanTranscript(
+        using provider: any PostProcessingProvider,
+        request: PostProcessingRequest,
+        deadline: ContinuousClock.Instant
+    ) async throws -> String {
+        let (results, completion) = AsyncThrowingStream<String, any Error>
+            .makeStream(bufferingPolicy: .bufferingNewest(1))
+        // A provider may still be unwinding after cancellation. The owner's
+        // wait ends as soon as the stream receives a result or the deadline.
+        let processing = Task { @MainActor in
+            do {
+                try Task.checkCancellation()
+                let output = try await provider.process(request)
+                try Task.checkCancellation()
+                let validated = try PostProcessingOutputPolicy.validatedOutput(
+                    output,
+                    rawTranscript: request.rawTranscript
+                )
+                guard ContinuousClock.now < deadline else {
+                    throw ProviderOperationFailure.deadlineExceeded
+                }
+                completion.yield(validated)
+                completion.finish()
+            } catch {
+                completion.finish(throwing: error)
+            }
+        }
+        let timer = Task { @concurrent in
+            do {
+                try await ContinuousClock().sleep(until: deadline)
+                completion.finish(throwing: ProviderOperationFailure.deadlineExceeded)
+            } catch {
+                // The operation finished before the timer.
+            }
+        }
+        defer {
+            processing.cancel()
+            timer.cancel()
+            completion.finish()
+        }
+
+        var iterator = results.makeAsyncIterator()
+        guard let output = try await iterator.next() else {
+            throw CancellationError()
+        }
+        try Task.checkCancellation()
+        return output
     }
 
     private func insertTranscript(
@@ -955,10 +1094,17 @@ final class DictationCoordinator: ObservableObject {
             throw CancellationError()
         }
 
+        let clipboardStartedAt = clock.now
         let transaction = clipboardService.beginTransaction(
-            replacingContentsWith: transcript
+            replacingContentsWith: transcript,
+            sessionID: token.id
         )
         activeClipboardTransaction = transaction
+        AppLog.recordLatency(
+            "clipboard_prepare",
+            since: clipboardStartedAt,
+            sessionID: token.id
+        )
 
         await Task.yield()
         try requireCurrent(token)
@@ -966,14 +1112,31 @@ final class DictationCoordinator: ObservableObject {
             throw CancellationError()
         }
 
+        let deliveryStartedAt = clock.now
+        let stopRequestedAt = self.stopRequestedAt
         let outcome = await textInsertionService.insert(
             transcript,
-            using: transaction
-        )
+            using: transaction,
+            sessionID: token.id
+        ) { dispatchedAt in
+            if isCurrent(token), let stopRequestedAt {
+                AppLog.recordLatency(
+                    "stop_to_paste_dispatch",
+                    since: stopRequestedAt,
+                    sessionID: token.id,
+                    until: dispatchedAt
+                )
+            }
+        }
         AppLog.insertion.info(
             "Insertion completed with outcome \(outcome.logClassification, privacy: .public)"
         )
         try requireCurrent(token)
+        AppLog.recordLatency(
+            "delivery_\(outcome.logClassification)",
+            since: deliveryStartedAt,
+            sessionID: token.id
+        )
         activeClipboardTransaction = nil
 
         switch outcome {
@@ -990,6 +1153,7 @@ final class DictationCoordinator: ObservableObject {
                 ) else {
                     throw CancellationError()
                 }
+                recordReadyForNextSession(token: token)
                 try await sleep(
                     for: TerminalDisplayDuration.rawFallback,
                     token: token
@@ -1205,6 +1369,7 @@ final class DictationCoordinator: ObservableObject {
         }
 
         _ = transition(to: .idle, token: token)
+        recordReadyForNextSession(token: token)
         pipelineEvents?.finish()
         pipelineEvents = nil
         currentToken = nil
@@ -1215,7 +1380,6 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
-        preparationStartedAt = nil
 
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
@@ -1225,7 +1389,7 @@ final class DictationCoordinator: ObservableObject {
     }
 
     private func completeCurrentSessionWithoutCue() {
-        guard currentToken != nil else {
+        guard let token = currentToken else {
             return
         }
 
@@ -1240,13 +1404,13 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
-        preparationStartedAt = nil
 
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
         }
         ownedArtifactURL = nil
         state = .idle
+        recordReadyForNextSession(token: token)
         AppLog.session.info(
             "Delivery status dismissed and session resources released"
         )
@@ -1279,7 +1443,7 @@ final class DictationCoordinator: ObservableObject {
 
         activeTextPayload?.clear()
         activeTextPayload = nil
-        preparationStartedAt = nil
+        stopRequestedAt = nil
         failedSessionContext = nil
         let restoredClipboard =
             activeClipboardTransaction?.cancelAndRestoreIfOwned()
@@ -1338,7 +1502,7 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
-        preparationStartedAt = nil
+        stopRequestedAt = nil
         ownedArtifactURL = nil
         state = .idle
     }
@@ -1349,6 +1513,18 @@ final class DictationCoordinator: ObservableObject {
     ) async throws {
         try await Task.sleep(for: .seconds(delay))
         try requireCurrent(token)
+    }
+
+    private func recordReadyForNextSession(token: SessionToken) {
+        guard let stopRequestedAt else {
+            return
+        }
+        self.stopRequestedAt = nil
+        AppLog.recordLatency(
+            "stop_to_ready_for_next_session",
+            since: stopRequestedAt,
+            sessionID: token.id
+        )
     }
 
     private func recordingState(

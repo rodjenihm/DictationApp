@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class AppleOnDeviceTranscriptionProvider:
-    TranscriptionProvider
+    LiveTranscriptionProvider
 {
     let providerID = ProviderID.appleOnDevice
 
@@ -10,6 +10,32 @@ final class AppleOnDeviceTranscriptionProvider:
 
     init(speechService: AppleSpeechService) {
         self.speechService = speechService
+    }
+
+    func supportsLiveTranscription(for language: LanguageSelection) -> Bool {
+        guard #available(macOS 26.0, *),
+              case .explicit(let localeIdentifier) = language
+        else {
+            return false
+        }
+        return !localeIdentifier.isEmpty
+    }
+
+    func startLiveTranscription(
+        audio: LiveRecordingAudio,
+        language: LanguageSelection
+    ) -> LiveTranscriptionSession {
+        LiveTranscriptionSession(audio: audio) { [speechService] in
+            guard #available(macOS 26.0, *),
+                  case .explicit(let localeIdentifier) = language
+            else {
+                return nil
+            }
+            return await speechService.transcribeLive(
+                audio: audio,
+                localeIdentifier: localeIdentifier
+            )
+        }
     }
 
     func transcribe(_ request: TranscriptionRequest) async throws

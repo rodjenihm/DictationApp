@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 
 enum AppLog {
-    private static let subsystem =
+    private nonisolated static let subsystem =
         Bundle.main.bundleIdentifier ?? "DictationApp"
 
     static let lifecycle = Logger(
@@ -29,4 +29,22 @@ enum AppLog {
         subsystem: subsystem,
         category: "insertion"
     )
+    private nonisolated static let latency = Logger(
+        subsystem: subsystem,
+        category: "latency"
+    )
+
+    nonisolated static func recordLatency(
+        _ stage: String,
+        since start: ContinuousClock.Instant,
+        sessionID: UUID? = nil,
+        until end: ContinuousClock.Instant = .now
+    ) {
+        let parts = start.duration(to: end).components
+        let milliseconds = parts.seconds * 1_000
+            + parts.attoseconds / 1_000_000_000_000_000
+        latency.info(
+            "\(stage, privacy: .public) duration_ms=\(milliseconds, privacy: .public) session=\(sessionID?.uuidString ?? "-", privacy: .public)"
+        )
+    }
 }

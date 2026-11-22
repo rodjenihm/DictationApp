@@ -43,7 +43,7 @@ enum SessionCancellationShortcutRegistrationError: LocalizedError {
 
 @MainActor
 final class GlobalShortcutService {
-    var onShortcutPressed: (() -> Void)?
+    var onShortcutPressed: ((ContinuousClock.Instant) -> Void)?
     var onSessionCancellationShortcutPressed: (() -> Void)?
 
     private(set) var activeShortcut: GlobalShortcut?
@@ -250,7 +250,10 @@ final class GlobalShortcutService {
         }
     }
 
-    private func handleHotKeyPressed(id: UInt32) {
+    private func handleHotKeyPressed(
+        id: UInt32,
+        receivedAt: ContinuousClock.Instant
+    ) {
         if id == sessionCancellationHotKeyID {
             onSessionCancellationShortcutPressed?()
             return
@@ -260,7 +263,7 @@ final class GlobalShortcutService {
             return
         }
 
-        onShortcutPressed?()
+        onShortcutPressed?(receivedAt)
     }
 
     private static let eventHandler: EventHandlerUPP = {
@@ -291,9 +294,10 @@ final class GlobalShortcutService {
             .fromOpaque(userData)
             .takeUnretainedValue()
         let identifier = hotKeyID.id
+        let receivedAt = ContinuousClock.now
 
         Task { @MainActor in
-            service.handleHotKeyPressed(id: identifier)
+            service.handleHotKeyPressed(id: identifier, receivedAt: receivedAt)
         }
 
         return noErr

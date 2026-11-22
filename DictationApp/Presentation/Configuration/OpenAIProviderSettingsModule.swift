@@ -45,7 +45,6 @@ final class OpenAIProviderSettingsModule:
                                 detail: $0.detail
                             )
                         },
-                    defaultModelID: "gpt-4o-transcribe",
                     languageSupport: .catalog(
                         OpenAIModelCatalog.languages.map {
                             ProviderLanguageDescriptor(
@@ -70,8 +69,7 @@ final class OpenAIProviderSettingsModule:
                                 displayName: $0.displayName,
                                 detail: $0.detail
                             )
-                        },
-                    defaultModelID: "gpt-5-mini"
+                        }
                 ),
             ]
         )
@@ -192,7 +190,8 @@ final class OpenAIProviderSettingsModule:
                         configuration.transcription.modelsByProvider[
                             .openAI
                         ]?.identifier
-                        ?? "gpt-4o-transcribe"
+                        ?? OpenAIModelCatalog.defaultTranscriptionModelID,
+                    language: .automatic
                 )
             } catch is CancellationError {
                 throw CancellationError()
@@ -209,7 +208,8 @@ final class OpenAIProviderSettingsModule:
             do {
                 try await validator.validateTranscription(
                     credential: credential,
-                    model: configuration.transcriptionModel.identifier
+                    model: configuration.transcriptionModel.identifier,
+                    language: configuration.language
                 )
             } catch is CancellationError {
                 throw CancellationError()
@@ -289,6 +289,8 @@ final class OpenAIProviderSettingsModule:
             kind = .authentication
         case OpenAIValidationError.modelUnavailable:
             kind = .model
+        case OpenAIValidationError.unsupportedLanguage:
+            kind = .language
         default:
             kind = .providerSetup
         }

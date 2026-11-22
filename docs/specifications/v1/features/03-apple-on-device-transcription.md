@@ -5,9 +5,11 @@
 ## Summary
 
 Add Apple On-Device as a transcription provider backed by the macOS 26
-`SpeechTranscriber` API. The provider transcribes completed recordings on the
-Mac without uploading audio, requiring an OpenAI credential, or incurring an
-OpenAI transcription charge.
+`SpeechTranscriber` API. The provider transcribes dictation audio on the Mac
+without uploading audio, requiring an OpenAI credential, or incurring an
+OpenAI transcription charge. [Live Apple On-Device transcription](11-live-apple-transcription.md)
+uses the same provider during capture and retains the completed-file workflow
+below for fallback and recovery.
 
 Apple On-Device and OpenAI remain explicit, independently selectable
 transcription providers. The application must never upload a recording to
@@ -47,7 +49,8 @@ global-language assumptions in
 - Use `DictationTranscriber` or guarantee parity with macOS system Dictation.
 - Support on-device transcription on macOS 15 through macOS 25.
 - Add a legacy `SFSpeechRecognizer` fallback.
-- Add live, streaming, or progressive transcription.
+- Add live input in this feature. The [live Apple transcription follow-up](11-live-apple-transcription.md)
+  specifies that behavior separately.
 - Show partial transcripts while recording.
 - Add automatic language detection for Apple.
 - Support multiple simultaneously reserved Apple locale assets.
@@ -120,7 +123,7 @@ model.
 
 The provider disclosure must state that:
 
-- Completed recording audio is processed on this Mac.
+- Dictation audio is processed on this Mac.
 - Audio is not uploaded for transcription.
 - Locale assets may be downloaded from Apple during setup.
 - Enabling cloud post-processing can still upload raw transcript text.
@@ -341,7 +344,8 @@ External permission decisions are never reverted.
 
 ## Transcription runtime
 
-Apple On-Device preserves the completed-file workflow:
+Apple On-Device uses the following completed-file workflow for fallback,
+retry, and explicitly approved retained partials:
 
 1. Record and finalize the existing M4A artifact.
 2. Resolve the immutable session provider and concrete locale.

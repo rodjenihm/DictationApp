@@ -93,7 +93,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
             modelsByProvider: [
                 .appleOnDevice:
                     .curated("apple-speech-transcriber"),
-                .openAI: .curated("gpt-4o-transcribe"),
+                .openAI: .curated(OpenAIModelCatalog.defaultTranscriptionModelID),
             ]
         ),
         transcriptionLanguagesByProvider: [
@@ -103,7 +103,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         postProcessing: StageConfiguration(
             activeProvider: .openAI,
             modelsByProvider: [
-                .openAI: .curated("gpt-5-mini"),
+                .openAI: .curated(OpenAIModelCatalog.defaultPostProcessingModelID),
             ]
         )
     )

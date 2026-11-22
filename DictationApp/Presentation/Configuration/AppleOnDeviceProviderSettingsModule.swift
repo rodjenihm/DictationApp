@@ -58,7 +58,7 @@ final class AppleOnDeviceProviderSettingsModule:
                     capability: .transcription,
                     processingLocation: .onDevice,
                     dataFlowDescription:
-                        "Completed audio is transcribed on this Mac. Language assets may be downloaded from Apple during setup.",
+                        "Dictation audio is transcribed on this Mac. Language assets may be downloaded from Apple during setup.",
                     supportsCustomModels: false,
                     defaultModelID: "apple-speech-transcriber",
                     languageSupport: .catalog(
@@ -677,7 +677,7 @@ private struct AppleOnDeviceProviderSettingsView: View {
 
             ConfigurationFormSupplementary {
                 Label(
-                    "Completed recording audio is processed on this Mac. Apple may be contacted only to install system-managed language assets.",
+                    "Dictation audio is processed on this Mac. Apple may be contacted only to install system-managed language assets.",
                     systemImage: "lock.shield"
                 )
                 .font(.caption)
@@ -732,7 +732,7 @@ private struct AppleOnDeviceProviderSettingsView: View {
         case .unavailableOnDevice:
             "The SpeechTranscriber model is unavailable on this Mac. OpenAI remains available for transcription."
         case .available:
-            "Apple SpeechTranscriber processes completed recordings locally using a concrete installed language."
+            "Apple SpeechTranscriber processes dictation audio locally using the installed language you select."
         }
     }
 

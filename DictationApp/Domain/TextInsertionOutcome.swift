@@ -21,7 +21,9 @@ enum TextInsertionOutcome: Equatable, Sendable {
 protocol TextInsertionServicing {
     func insert(
         _ text: String,
-        using clipboardTransaction: any ClipboardTransactionHandling
+        using clipboardTransaction: any ClipboardTransactionHandling,
+        sessionID: UUID,
+        onPasteDispatched: (ContinuousClock.Instant) -> Void
     ) async -> TextInsertionOutcome
 }
 

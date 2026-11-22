@@ -232,27 +232,7 @@ final class AppleSpeechService {
         guard #available(macOS 26.0, *) else {
             throw AppleSpeechServiceError.unavailable
         }
-        guard SpeechTranscriber.isAvailable else {
-            throw AppleSpeechServiceError.unavailable
-        }
-        guard
-            let locale = await supportedLocale(
-                for: localeIdentifier
-            )
-        else {
-            throw AppleSpeechServiceError.unsupportedLocale
-        }
-
-        let transcriber = SpeechTranscriber(
-            locale: locale,
-            preset: .transcription
-        )
-        guard
-            await AssetInventory.status(forModules: [transcriber])
-                == .installed
-        else {
-            throw AppleSpeechServiceError.assetMissing
-        }
+        let transcriber = try await installedTranscriber(for: localeIdentifier)
 
         let audioFile: AVAudioFile
         do {
@@ -262,18 +242,8 @@ final class AppleSpeechService {
         }
 
         let analyzer = SpeechAnalyzer(modules: [transcriber])
-        let resultTask = Task { () throws -> String in
-            var transcript = ""
-            for try await result in transcriber.results {
-                try Task.checkCancellation()
-                guard result.isFinal else {
-                    continue
-                }
-                transcript.append(
-                    String(result.text.characters)
-                )
-            }
-            return transcript
+        let resultTask = Task { @concurrent in
+            try await Self.finalText(from: transcriber)
         }
 
         do {
@@ -299,6 +269,107 @@ final class AppleSpeechService {
             }
             throw AppleSpeechServiceError.analysisFailed
         }
+    }
+
+    @available(macOS 26.0, *)
+    @concurrent
+    nonisolated func transcribeLive(
+        audio: LiveRecordingAudio,
+        localeIdentifier: String
+    ) async -> String? {
+        do {
+            let transcriber = try await installedTranscriber(for: localeIdentifier)
+            guard
+                !audio.isAborted,
+                let format = await SpeechAnalyzer.bestAvailableAudioFormat(
+                    compatibleWith: [transcriber]
+                )
+            else {
+                return nil
+            }
+            try Task.checkCancellation()
+
+            let input = try AppleSpeechAudioInput(source: audio, outputFormat: format)
+            let analyzer = SpeechAnalyzer(
+                modules: [transcriber],
+                options: .init(priority: .userInitiated, modelRetention: .lingering)
+            )
+            return await withTaskCancellationHandler {
+                let resultTask = Task { @concurrent in
+                    try await Self.finalText(from: transcriber)
+                }
+                defer { resultTask.cancel() }
+
+                do {
+                    try await analyzer.prepareToAnalyze(in: format)
+                    guard
+                        let lastSampleTime = try await analyzer.analyzeSequence(input.inputs),
+                        input.wasFullyConsumed
+                    else {
+                        throw AppleSpeechServiceError.invalidAudio
+                    }
+                    try await analyzer.finalizeAndFinish(through: lastSampleTime)
+                    let text = try await resultTask.value
+                    try Task.checkCancellation()
+                    return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? nil : text
+                } catch {
+                    audio.abort()
+                    if !Task.isCancelled {
+                        await analyzer.cancelAndFinishNow()
+                    }
+                    return nil
+                }
+            } onCancel: {
+                Task { @concurrent in
+                    await analyzer.cancelAndFinishNow()
+                }
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    @available(macOS 26.0, *)
+    private nonisolated func installedTranscriber(
+        for localeIdentifier: String
+    ) async throws -> SpeechTranscriber {
+        guard SpeechTranscriber.isAvailable else {
+            throw AppleSpeechServiceError.unavailable
+        }
+        guard
+            let locale = await supportedLocale(
+                for: localeIdentifier
+            )
+        else {
+            throw AppleSpeechServiceError.unsupportedLocale
+        }
+
+        let transcriber = SpeechTranscriber(
+            locale: locale,
+            preset: .transcription
+        )
+        guard
+            await AssetInventory.status(forModules: [transcriber])
+                == .installed
+        else {
+            throw AppleSpeechServiceError.assetMissing
+        }
+        return transcriber
+    }
+
+    @available(macOS 26.0, *)
+    private nonisolated static func finalText(
+        from transcriber: SpeechTranscriber
+    ) async throws -> String {
+        var transcript = ""
+        for try await result in transcriber.results {
+            try Task.checkCancellation()
+            if result.isFinal {
+                transcript.append(String(result.text.characters))
+            }
+        }
+        return transcript
     }
 
     @available(macOS 26.0, *)
@@ -469,7 +540,7 @@ final class AppleSpeechService {
     }
 
     @available(macOS 26.0, *)
-    private func supportedLocale(
+    private nonisolated func supportedLocale(
         for identifier: String
     ) async -> Locale? {
         let requested = Locale(identifier: identifier)

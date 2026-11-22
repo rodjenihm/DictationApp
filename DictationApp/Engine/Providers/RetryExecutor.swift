@@ -33,6 +33,8 @@ struct RetryExecutor {
     }
 
     func execute<Value>(
+        deadline: ContinuousClock.Instant? = nil,
+        diagnosticSessionID: UUID? = nil,
         _ operation: () async throws -> Value
     ) async throws -> Value {
         var attempt = 1
@@ -40,11 +42,22 @@ struct RetryExecutor {
 
         while true {
             try Task.checkCancellation()
+            let attemptStartedAt = ContinuousClock.now
+            if let deadline, attemptStartedAt >= deadline {
+                throw ProviderOperationFailure.deadlineExceeded
+            }
             AppLog.providers.debug(
                 "Provider attempt \(attempt, privacy: .public) started"
             )
 
             do {
+                defer {
+                    AppLog.recordLatency(
+                        "provider_attempt_\(attempt)",
+                        since: attemptStartedAt,
+                        sessionID: diagnosticSessionID
+                    )
+                }
                 let value = try await operation()
                 AppLog.providers.debug(
                     "Provider attempt \(attempt, privacy: .public) succeeded"
@@ -69,18 +82,33 @@ struct RetryExecutor {
                     maximumCumulativeWait - cumulativeWait
                 )
 
-                let delay = min(
-                    retryDelay(
-                        for: failure,
-                        completedAttempt: attempt
-                    ),
-                    remainingWait
+                let requestedDelay = retryDelay(
+                    for: failure,
+                    completedAttempt: attempt
                 )
+                if let deadline {
+                    guard
+                        requestedDelay <= remainingWait,
+                        ContinuousClock.now.advanced(by: .seconds(requestedDelay))
+                            < deadline
+                    else {
+                        throw failure
+                    }
+                }
+                let delay = min(requestedDelay, remainingWait)
 
                 if delay > 0 {
                     AppLog.providers.notice(
                         "Provider transient failure scheduled retry"
                     )
+                    let waitStartedAt = ContinuousClock.now
+                    defer {
+                        AppLog.recordLatency(
+                            "provider_retry_wait",
+                            since: waitStartedAt,
+                            sessionID: diagnosticSessionID
+                        )
+                    }
                     do {
                         try await sleep(delay)
                     } catch is CancellationError {

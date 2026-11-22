@@ -7,7 +7,7 @@ struct ConfigurationTranscriptionView: View {
     var body: some View {
         ConfigurationPage(
             title: "Transcription",
-            detail: "Choose how completed recordings become text."
+            detail: "Choose how dictation audio becomes text."
         ) {
             ConfigurationForm {
                 providerSelection

@@ -37,9 +37,10 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
     func transcribe(_ request: TranscriptionRequest) async throws -> String {
         try Task.checkCancellation()
 
+        let preparationStartedAt = ContinuousClock.now
         let model = try modelIdentifier(for: request.model)
         let language = try languageIdentifier(for: request.language)
-        let credential = try resolveCredential()
+        let credential = try await resolveCredential()
         let urlRequest = try await Self.prepareRequest(
             artifact: request.artifact,
             baseURL: baseURL,
@@ -48,8 +49,15 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             language: language
         )
         try Task.checkCancellation()
+        AppLog.recordLatency(
+            "openai_transcription_request_preparation",
+            since: preparationStartedAt,
+            sessionID: request.diagnosticSessionID
+        )
 
-        return try await retryExecutor.execute { [self, urlRequest] in
+        return try await retryExecutor.execute(
+            diagnosticSessionID: request.diagnosticSessionID
+        ) { [self] in
             try Task.checkCancellation()
             return try await perform(urlRequest)
         }
@@ -83,7 +91,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         guard
             let identifier =
                 OpenAIModelCatalog.transcriptionAPIIdentifier(for: selection),
-            isSafeMultipartValue(identifier)
+            OpenAITranscriptionPayload.isValidFieldValue(identifier)
         else {
             throw ProviderOperationFailure.scopedConfiguration(
                 kind: .model,
@@ -104,7 +112,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
                 let identifier =
                     OpenAIModelCatalog
                         .transcriptionLanguageAPIIdentifier(for: selection),
-                isSafeMultipartValue(identifier)
+                OpenAITranscriptionPayload.isValidFieldValue(identifier)
             else {
                 throw ProviderOperationFailure.scopedConfiguration(
                     kind: .language,
@@ -115,11 +123,13 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         }
     }
 
-    private func resolveCredential() throws -> String {
+    private func resolveCredential() async throws -> String {
         let credential: String
 
         do {
-            guard let savedCredential = try credentialStore.readCredential()
+            guard
+                let savedCredential =
+                    try await credentialStore.readCredentialForProviderOperation()
             else {
                 throw ProviderOperationFailure.scopedConfiguration(
                     kind: .authentication,
@@ -127,6 +137,8 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
                 )
             }
             credential = savedCredential
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let failure as ProviderOperationFailure {
             throw failure
         } catch {
@@ -209,38 +221,11 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             )
         }
 
-        let boundary = "DictationApp-\(UUID().uuidString)"
-        var body = Data()
-        body.appendMultipartField(
-            name: "model",
-            value: model,
-            boundary: boundary
+        let payload = OpenAITranscriptionPayload(
+            model: model,
+            language: language,
+            audioData: audioData
         )
-        body.appendMultipartField(
-            name: "response_format",
-            value: "json",
-            boundary: boundary
-        )
-        body.appendMultipartField(
-            name: "chunking_strategy",
-            value: "auto",
-            boundary: boundary
-        )
-        if let language {
-            body.appendMultipartField(
-                name: "language",
-                value: language,
-                boundary: boundary
-            )
-        }
-        body.appendMultipartFile(
-            name: "file",
-            filename: "recording.m4a",
-            contentType: "audio/mp4",
-            data: audioData,
-            boundary: boundary
-        )
-        body.appendUTF8("--\(boundary)--\r\n")
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -250,10 +235,10 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
             forHTTPHeaderField: "Authorization"
         )
         request.setValue(
-            "multipart/form-data; boundary=\(boundary)",
+            payload.contentType,
             forHTTPHeaderField: "Content-Type"
         )
-        request.httpBody = body
+        request.httpBody = payload.body
         return request
     }
 
@@ -296,7 +281,7 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
 
         guard
             let response = try? decoder.decode(
-                TranscriptionResponse.self,
+                OpenAITranscriptionPayload.Response.self,
                 from: data
             )
         else {
@@ -417,12 +402,6 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         return nil
     }
 
-    private func isSafeMultipartValue(_ value: String) -> Bool {
-        !value.isEmpty
-            && !value.contains("\r")
-            && !value.contains("\n")
-    }
-
     private static let configurationErrorCodes: Set<String> = [
         "invalid_api_key",
         "invalid_model",
@@ -431,10 +410,6 @@ final class OpenAITranscriptionProvider: TranscriptionProvider {
         "model_not_supported",
         "unsupported_model",
     ]
-}
-
-private struct TranscriptionResponse: Decodable {
-    let text: String
 }
 
 private struct OpenAIErrorResponse: Decodable {
@@ -476,40 +451,5 @@ private struct OpenAIErrorResponse: Decodable {
                 forKey: .param
             )
         }
-    }
-}
-
-private extension Data {
-    nonisolated mutating func appendUTF8(_ string: String) {
-        append(Data(string.utf8))
-    }
-
-    nonisolated mutating func appendMultipartField(
-        name: String,
-        value: String,
-        boundary: String
-    ) {
-        appendUTF8("--\(boundary)\r\n")
-        appendUTF8(
-            "Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n"
-        )
-        appendUTF8("\(value)\r\n")
-    }
-
-    nonisolated mutating func appendMultipartFile(
-        name: String,
-        filename: String,
-        contentType: String,
-        data: Data,
-        boundary: String
-    ) {
-        appendUTF8("--\(boundary)\r\n")
-        appendUTF8(
-            "Content-Disposition: form-data; name=\"\(name)\"; " +
-                "filename=\"\(filename)\"\r\n"
-        )
-        appendUTF8("Content-Type: \(contentType)\r\n\r\n")
-        append(data)
-        appendUTF8("\r\n")
     }
 }

@@ -1,8 +1,9 @@
 import Foundation
 
-struct PreparedRecording: Equatable, Sendable {
+struct PreparedRecording: Sendable {
     let inputDeviceName: String
     let isUsingFallback: Bool
+    let liveAudio: LiveRecordingAudio?
 }
 
 enum AudioRecorderError: Error, Equatable, Sendable {
@@ -29,9 +30,10 @@ protocol AudioRecorder: AnyObject {
     func prepare(
         profile: RecordingProfile,
         audioInputPreference: AudioInputPreference,
-        sessionIdentifier: UUID
+        sessionIdentifier: UUID,
+        includeLiveAudio: Bool
     ) async throws -> PreparedRecording
-    func startPreparedRecording() async throws
+    func startPreparedRecording() async throws -> ContinuousClock.Instant
     func stopRecording() async throws -> AudioArtifact
     func cancelRecording(sessionIdentifier: UUID) async
     func cancelImmediately(sessionIdentifier: UUID)

@@ -30,6 +30,20 @@ struct PostProcessingConfiguration: Equatable, Sendable {
 struct PostProcessingRequest: Equatable, Sendable {
     let rawTranscript: String
     let model: ModelSelection
+    let deadline: ContinuousClock.Instant?
+    let diagnosticSessionID: UUID?
+
+    init(
+        rawTranscript: String,
+        model: ModelSelection,
+        deadline: ContinuousClock.Instant? = nil,
+        diagnosticSessionID: UUID? = nil
+    ) {
+        self.rawTranscript = rawTranscript
+        self.model = model
+        self.deadline = deadline
+        self.diagnosticSessionID = diagnosticSessionID
+    }
 }
 
 protocol PostProcessingProvider {

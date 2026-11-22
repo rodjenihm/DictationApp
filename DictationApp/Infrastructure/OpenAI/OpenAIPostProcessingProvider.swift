@@ -86,8 +86,9 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
     ) async throws -> String {
         try Task.checkCancellation()
 
+        let preparationStartedAt = ContinuousClock.now
         let model = try modelIdentifier(for: request.model)
-        let credential = try resolveCredential()
+        let credential = try await resolveCredential()
         let serializedTranscript = try serializeTranscript(
             request.rawTranscript
         )
@@ -95,16 +96,43 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
             PostProcessingOutputPolicy.maximumOutputTokens(
                 for: request.rawTranscript
             )
+        var payload = OpenAICleanupPayload(
+            model: model,
+            instructions: Self.cleanupInstructions,
+            input: serializedTranscript,
+            maxOutputTokens: maximumOutputTokens
+        )
+        var urlRequest = try makeRequest(
+            credential: credential,
+            payload: payload
+        )
+        AppLog.recordLatency(
+            "openai_cleanup_request_preparation",
+            since: preparationStartedAt,
+            sessionID: request.diagnosticSessionID
+        )
 
-        return try await retryExecutor.execute { [self] in
+        return try await retryExecutor.execute(
+            deadline: request.deadline,
+            diagnosticSessionID: request.diagnosticSessionID
+        ) { [self] in
             try Task.checkCancellation()
-            let urlRequest = try makeRequest(
-                credential: credential,
-                model: model,
-                serializedTranscript: serializedTranscript,
-                maximumOutputTokens: maximumOutputTokens
-            )
-            return try await perform(urlRequest)
+            do {
+                return try await perform(
+                    urlRequest,
+                    serviceTier: payload.serviceTier
+                )
+            } catch is OpenAIFastTierRejected {
+                payload.serviceTier = .standard
+                urlRequest = try makeRequest(
+                    credential: credential,
+                    payload: payload
+                )
+                throw ProviderOperationFailure.transient(
+                    message: "Fast mode is unavailable for this project.",
+                    retryAfter: 0
+                )
+            }
         }
     }
 
@@ -126,11 +154,13 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
         return identifier
     }
 
-    private func resolveCredential() throws -> String {
+    private func resolveCredential() async throws -> String {
         let credential: String
 
         do {
-            guard let savedCredential = try credentialStore.readCredential()
+            guard
+                let savedCredential =
+                    try await credentialStore.readCredentialForProviderOperation()
             else {
                 throw ProviderOperationFailure.scopedConfiguration(
                     kind: .authentication,
@@ -138,6 +168,8 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
                 )
             }
             credential = savedCredential
+        } catch is CancellationError {
+            throw CancellationError()
         } catch let failure as ProviderOperationFailure {
             throw failure
         } catch {
@@ -183,9 +215,7 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
 
     private func makeRequest(
         credential: String,
-        model: String,
-        serializedTranscript: String,
-        maximumOutputTokens: Int
+        payload: OpenAICleanupPayload
     ) throws -> URLRequest {
         guard
             let url = URL(
@@ -198,16 +228,6 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
                     "The post-processing request could not be created."
             )
         }
-
-        let payload = ResponsesRequest(
-            model: model,
-            instructions: Self.cleanupInstructions,
-            input: serializedTranscript,
-            reasoning: .init(effort: "minimal"),
-            maxOutputTokens: maximumOutputTokens,
-            tools: [],
-            store: false
-        )
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -233,7 +253,8 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
     }
 
     private func perform(
-        _ request: URLRequest
+        _ request: URLRequest,
+        serviceTier: OpenAICleanupPayload.ServiceTier?
     ) async throws -> String {
         let data: Data
         let response: URLResponse
@@ -269,7 +290,18 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
-            throw failure(for: httpResponse, data: data)
+            let providerError = try? decoder.decode(
+                OpenAICleanupErrorResponse.self,
+                from: data
+            ).error
+            if OpenAIFastTierRejected.matches(
+                tier: serviceTier,
+                statusCode: httpResponse.statusCode,
+                error: providerError
+            ) {
+                throw OpenAIFastTierRejected()
+            }
+            throw failure(for: httpResponse, providerError: providerError)
         }
 
         guard
@@ -302,12 +334,8 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
 
     private func failure(
         for response: HTTPURLResponse,
-        data: Data
+        providerError: OpenAICleanupErrorResponse.ProviderError?
     ) -> ProviderOperationFailure {
-        let providerError = try? decoder.decode(
-            PostProcessingOpenAIErrorResponse.self,
-            from: data
-        ).error
         let code = providerError?.code?.lowercased()
         let type = providerError?.type?.lowercased()
         let parameter = providerError?.param?.lowercased()
@@ -430,32 +458,6 @@ private struct RawTranscriptInput: Encodable {
     }
 }
 
-private struct ResponsesRequest: Encodable {
-    struct Reasoning: Encodable {
-        let effort: String
-    }
-
-    let model: String
-    let instructions: String
-    let input: String
-    let reasoning: Reasoning
-    let maxOutputTokens: Int
-    let tools: [ResponsesTool]
-    let store: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case model
-        case instructions
-        case input
-        case reasoning
-        case maxOutputTokens = "max_output_tokens"
-        case tools
-        case store
-    }
-}
-
-private struct ResponsesTool: Encodable {}
-
 private struct ResponsesResponse: Decodable {
     let status: String
     let output: [OutputItem]
@@ -481,47 +483,5 @@ private struct ResponsesResponse: Decodable {
     struct Content: Decodable {
         let type: String
         let text: String?
-    }
-}
-
-private struct PostProcessingOpenAIErrorResponse: Decodable {
-    let error: ProviderError
-
-    struct ProviderError: Decodable {
-        let type: String?
-        let code: String?
-        let param: String?
-
-        enum CodingKeys: String, CodingKey {
-            case type
-            case code
-            case param
-        }
-
-        init(from decoder: any Decoder) throws {
-            let container = try decoder.container(
-                keyedBy: CodingKeys.self
-            )
-            type = try container.decodeIfPresent(
-                String.self,
-                forKey: .type
-            )
-
-            if
-                let stringCode = try? container.decodeIfPresent(
-                    String.self,
-                    forKey: .code
-                )
-            {
-                code = stringCode
-            } else {
-                code = nil
-            }
-
-            param = try container.decodeIfPresent(
-                String.self,
-                forKey: .param
-            )
-        }
     }
 }

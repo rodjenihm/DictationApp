@@ -3,7 +3,8 @@ import Foundation
 protocol OpenAIConfigurationValidating {
     func validateTranscription(
         credential: String,
-        model: String
+        model: String,
+        language: LanguageSelection
     ) async throws
 
     func validatePostProcessing(
@@ -17,6 +18,7 @@ enum OpenAIValidationError: LocalizedError {
     case invalidRequest
     case invalidCredential
     case modelUnavailable
+    case unsupportedLanguage
     case rateLimited
     case providerRejectedConfiguration
     case providerUnavailable
@@ -33,6 +35,8 @@ enum OpenAIValidationError: LocalizedError {
             "OpenAI rejected the API key."
         case .modelUnavailable:
             "The selected model does not exist or is not accessible with this API key."
+        case .unsupportedLanguage:
+            "The selected transcription language is not supported."
         case .rateLimited:
             "OpenAI rate-limited the validation request. Check project quota and try again."
         case .providerRejectedConfiguration:
@@ -65,8 +69,18 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
 
     func validateTranscription(
         credential: String,
-        model: String
+        model: String,
+        language: LanguageSelection
     ) async throws {
+        guard OpenAITranscriptionPayload.isValidFieldValue(model) else {
+            throw OpenAIValidationError.invalidRequest
+        }
+        let languageID = OpenAIModelCatalog.transcriptionLanguageAPIIdentifier(
+            for: language
+        )
+        guard language == .automatic || languageID != nil else {
+            throw OpenAIValidationError.unsupportedLanguage
+        }
         guard
             let fixtureURL = bundle.url(
                 forResource: "silent-validation",
@@ -83,26 +97,11 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
             throw OpenAIValidationError.missingValidationFixture
         }
 
-        let boundary = "DictationApp-\(UUID().uuidString)"
-        var body = Data()
-        body.appendMultipartField(
-            name: "model",
-            value: model,
-            boundary: boundary
+        let payload = OpenAITranscriptionPayload(
+            model: model,
+            language: languageID,
+            audioData: audioData
         )
-        body.appendMultipartField(
-            name: "response_format",
-            value: "json",
-            boundary: boundary
-        )
-        body.appendMultipartFile(
-            name: "file",
-            filename: "validation.m4a",
-            contentType: "audio/mp4",
-            data: audioData,
-            boundary: boundary
-        )
-        body.appendUTF8("--\(boundary)--\r\n")
 
         var request = try authorizedRequest(
             path: "audio/transcriptions",
@@ -110,14 +109,14 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
         )
         request.httpMethod = "POST"
         request.setValue(
-            "multipart/form-data; boundary=\(boundary)",
+            payload.contentType,
             forHTTPHeaderField: "Content-Type"
         )
-        request.httpBody = body
+        request.httpBody = payload.body
 
         let data = try await perform(request)
         guard
-            (try? decoder.decode(TranscriptionValidationResponse.self, from: data))
+            (try? decoder.decode(OpenAITranscriptionPayload.Response.self, from: data))
                 != nil
         else {
             throw OpenAIValidationError.malformedResponse
@@ -128,14 +127,12 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
         credential: String,
         model: String
     ) async throws {
-        let payload = ResponsesValidationRequest(
+        var payload = OpenAICleanupPayload(
             model: model,
             instructions:
                 "Return only the word OK. Do not add punctuation or explanation.",
             input: "Configuration validation",
-            reasoning: .init(effort: "minimal"),
-            maxOutputTokens: 128,
-            store: false
+            maxOutputTokens: 128
         )
 
         var request = try authorizedRequest(
@@ -148,13 +145,13 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
             forHTTPHeaderField: "Content-Type"
         )
 
+        let data: Data
         do {
-            request.httpBody = try encoder.encode(payload)
-        } catch {
-            throw OpenAIValidationError.invalidRequest
+            data = try await performCleanupValidation(request, payload: payload)
+        } catch is OpenAIFastTierRejected {
+            payload.serviceTier = .standard
+            data = try await performCleanupValidation(request, payload: payload)
         }
-
-        let data = try await perform(request)
         guard
             let response = try? decoder.decode(
                 ResponsesValidationResponse.self,
@@ -165,6 +162,20 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
         else {
             throw OpenAIValidationError.malformedResponse
         }
+    }
+
+    private func performCleanupValidation(
+        _ request: URLRequest,
+        payload: OpenAICleanupPayload
+    ) async throws -> Data {
+        try Task.checkCancellation()
+        var request = request
+        do {
+            request.httpBody = try encoder.encode(payload)
+        } catch {
+            throw OpenAIValidationError.invalidRequest
+        }
+        return try await perform(request, serviceTier: payload.serviceTier)
     }
 
     private func authorizedRequest(
@@ -183,7 +194,10 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
         return request
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
+    private func perform(
+        _ request: URLRequest,
+        serviceTier: OpenAICleanupPayload.ServiceTier? = nil
+    ) async throws -> Data {
         let data: Data
         let response: URLResponse
 
@@ -202,6 +216,19 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
         }
 
         guard (200..<300).contains(httpResponse.statusCode) else {
+            if
+                serviceTier == .fast,
+                OpenAIFastTierRejected.matches(
+                    tier: serviceTier,
+                    statusCode: httpResponse.statusCode,
+                    error: try? decoder.decode(
+                        OpenAICleanupErrorResponse.self,
+                        from: data
+                    ).error
+                )
+            {
+                throw OpenAIFastTierRejected()
+            }
             throw error(for: httpResponse.statusCode)
         }
 
@@ -226,32 +253,6 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
     }
 }
 
-private struct TranscriptionValidationResponse: Decodable {
-    let text: String
-}
-
-private struct ResponsesValidationRequest: Encodable {
-    struct Reasoning: Encodable {
-        let effort: String
-    }
-
-    let model: String
-    let instructions: String
-    let input: String
-    let reasoning: Reasoning
-    let maxOutputTokens: Int
-    let store: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case model
-        case instructions
-        case input
-        case reasoning
-        case maxOutputTokens = "max_output_tokens"
-        case store
-    }
-}
-
 private struct ResponsesValidationResponse: Decodable {
     let status: String
     let output: [OutputItem]
@@ -269,40 +270,5 @@ private struct ResponsesValidationResponse: Decodable {
     struct Content: Decodable {
         let type: String
         let text: String?
-    }
-}
-
-private extension Data {
-    mutating func appendUTF8(_ string: String) {
-        append(Data(string.utf8))
-    }
-
-    mutating func appendMultipartField(
-        name: String,
-        value: String,
-        boundary: String
-    ) {
-        appendUTF8("--\(boundary)\r\n")
-        appendUTF8(
-            "Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n"
-        )
-        appendUTF8("\(value)\r\n")
-    }
-
-    mutating func appendMultipartFile(
-        name: String,
-        filename: String,
-        contentType: String,
-        data: Data,
-        boundary: String
-    ) {
-        appendUTF8("--\(boundary)\r\n")
-        appendUTF8(
-            "Content-Disposition: form-data; name=\"\(name)\"; " +
-                "filename=\"\(filename)\"\r\n"
-        )
-        appendUTF8("Content-Type: \(contentType)\r\n\r\n")
-        append(data)
-        appendUTF8("\r\n")
     }
 }

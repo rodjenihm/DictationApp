@@ -1,11 +1,21 @@
 import Foundation
 import Security
 
-protocol CredentialStore {
+nonisolated protocol CredentialStore: Sendable {
     func credentialExists() throws -> Bool
     func readCredential() throws -> String?
     func replaceCredential(with credential: String) throws
     func deleteCredential() throws
+}
+
+extension CredentialStore {
+    @concurrent
+    func readCredentialForProviderOperation() async throws -> String? {
+        try Task.checkCancellation()
+        let credential = try readCredential()
+        try Task.checkCancellation()
+        return credential
+    }
 }
 
 enum CredentialStoreError: LocalizedError {
@@ -25,7 +35,7 @@ enum CredentialStoreError: LocalizedError {
     }
 }
 
-final class KeychainCredentialStore: CredentialStore {
+nonisolated final class KeychainCredentialStore: CredentialStore {
     private let service = "com.danijelmitrovic.DictationApp.openai"
     private let account = "api-key"
 

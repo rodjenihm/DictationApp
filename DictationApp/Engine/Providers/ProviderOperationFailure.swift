@@ -2,6 +2,7 @@ import Foundation
 
 enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
     case cancelled
+    case deadlineExceeded
     case transient(message: String, retryAfter: TimeInterval?)
     case configuration(message: String)
     case scopedConfiguration(
@@ -14,6 +15,8 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
         switch self {
         case .cancelled:
             "The provider operation was cancelled."
+        case .deadlineExceeded:
+            "Cleanup took too long."
         case .transient(let message, _),
              .configuration(let message),
              .scopedConfiguration(_, let message),
@@ -38,7 +41,7 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
             .unknown
         case .scopedConfiguration(let kind, _):
             kind
-        case .cancelled, .transient, .operation:
+        case .cancelled, .deadlineExceeded, .transient, .operation:
             nil
         }
     }
@@ -61,6 +64,8 @@ enum ProviderOperationFailure: Equatable, LocalizedError, Sendable {
         switch self {
         case .cancelled:
             "cancelled"
+        case .deadlineExceeded:
+            "deadline_exceeded"
         case .transient:
             "transient"
         case .configuration, .scopedConfiguration:

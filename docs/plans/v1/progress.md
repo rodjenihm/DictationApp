@@ -492,6 +492,11 @@ Verification limitations:
 
 ## Next action
 
-The **v1 implementation, compact-overlay follow-up, modernized-settings
-follow-up, and aligned-settings-controls follow-up are complete and awaiting
-review**.
+The implementation of the latency and provider updates is available for
+review. Collect representative Stop-to-paste measurements and exercise the
+cross-app delivery and provider paths. The implementation plans record
+build evidence and remaining runtime verification.
+
+- [Dictation pipeline latency](features/09-dictation-pipeline-latency.md)
+- [OpenAI model migration](features/10-openai-model-migration.md)
+- [Live Apple On-Device transcription](features/11-live-apple-transcription.md)
