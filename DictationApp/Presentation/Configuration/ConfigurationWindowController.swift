@@ -26,7 +26,7 @@ final class ConfigurationWindowController:
         ]
         window.isReleasedWhenClosed = false
         window.autorecalculatesKeyViewLoop = true
-        window.setContentSize(NSSize(width: 800, height: 640))
+        window.setContentSize(NSSize(width: 880, height: 660))
         window.minSize = NSSize(width: 720, height: 540)
         window.center()
 

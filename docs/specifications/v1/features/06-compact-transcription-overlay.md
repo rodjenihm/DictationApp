@@ -30,6 +30,9 @@ A successful automatic insertion is already visible at the target text cursor.
 The additional 1.2-second success overlay duplicates that confirmation and
 delays the next recording.
 
+The [interface polish specification](14-interface-polish.md) refines the
+current recording and recovery visuals.
+
 ## Goals
 
 - Make routine recording and transcription feedback smaller and quieter.

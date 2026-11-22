@@ -7,7 +7,8 @@ struct ConfigurationTranscriptionView: View {
     var body: some View {
         ConfigurationPage(
             title: "Transcription",
-            detail: "Choose how dictation audio becomes text."
+            detail: "Choose a speech recognition provider and language.",
+            systemImage: SettingsDestination.transcription.systemImage
         ) {
             ConfigurationForm {
                 providerSelection
@@ -29,6 +30,7 @@ struct ConfigurationTranscriptionView: View {
                     )
                 }
             }
+            .configurationPanel()
         }
         .onChange(of: viewModel.issues, initial: true) {
             routeIssueFocus()
@@ -237,7 +239,8 @@ struct ConfigurationPostProcessingView: View {
     var body: some View {
         ConfigurationPage(
             title: "Post-processing",
-            detail: "Optionally clean punctuation and formatting."
+            detail: "Edit punctuation, formatting, and fillers before pasting.",
+            systemImage: SettingsDestination.postProcessing.systemImage
         ) {
             ConfigurationSection(
                 "Transcript cleanup",
@@ -247,8 +250,10 @@ struct ConfigurationPostProcessingView: View {
                     "Enable transcript cleanup",
                     isOn: $viewModel.postProcessingEnabled
                 )
+                .toggleStyle(.switch)
 
                 if viewModel.postProcessingEnabled {
+                    Divider()
                     ConfigurationForm {
                         enabledConfiguration
                     }
@@ -260,6 +265,7 @@ struct ConfigurationPostProcessingView: View {
                     .foregroundStyle(.secondary)
                 }
             }
+            .configurationPanel()
         }
         .onChange(of: viewModel.issues, initial: true) {
             routeIssueFocus()

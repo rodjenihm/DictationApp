@@ -2,6 +2,9 @@
 
 **Status:** Complete
 
+The [interface polish specification](14-interface-polish.md) governs the
+current visual hierarchy and General section order.
+
 ## Summary
 
 Modernize DictationApp's Settings presentation while retaining the existing

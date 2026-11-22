@@ -6,11 +6,18 @@ struct ConfigurationGeneralView: View {
     var body: some View {
         ConfigurationPage(
             title: "General",
-            detail: "Permissions, input, shortcut, feedback, and privacy."
+            detail: "Set up your microphone, shortcut, and permissions.",
+            systemImage: SettingsDestination.general.systemImage
         ) {
-            permissionsSection
+            ConfigurationFlowSummary(viewModel: viewModel)
+            if viewModel.microphoneStatus != .granted {
+                permissionsSection
+            }
             recordingSection
             shortcutSection
+            if viewModel.microphoneStatus == .granted {
+                permissionsSection
+            }
             feedbackSection
             privacySection
         }
@@ -203,32 +210,31 @@ struct ConfigurationGeneralView: View {
             "Global Shortcut",
             systemImage: "keyboard"
         ) {
-            ShortcutRecorder(
-                shortcut: viewModel.globalShortcut,
-                isEnabled: true,
-                onCandidate: viewModel.updateGlobalShortcut
-            )
-
-            HStack {
-                Text(
-                    "The saved shortcut stays active until Save Changes succeeds."
+            ConfigurationSettingRow("Start or stop") {
+                ShortcutRecorder(
+                    shortcut: viewModel.globalShortcut,
+                    onCandidate: viewModel.updateGlobalShortcut
                 )
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .configurationFieldControl()
+            } detail: {
+                Text("Select the shortcut to record a new one, then save your changes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-                Spacer()
-
-                Button("Reset to Option–Space") {
-                    viewModel.resetGlobalShortcut()
+            if viewModel.globalShortcut != GlobalShortcut.defaultShortcut {
+                ConfigurationFormSupplementary {
+                    Button("Reset to Option–Space") {
+                        viewModel.resetGlobalShortcut()
+                    }
                 }
-                .disabled(
-                    viewModel.globalShortcut
-                        == GlobalShortcut.defaultShortcut
-                )
             }
 
             if let message = viewModel.shortcutErrorMessage {
-                ConfigurationIssueLabel(message: message)
+                ConfigurationFormSupplementary {
+                    ConfigurationIssueLabel(message: message)
+                }
             }
         }
     }
@@ -299,7 +305,7 @@ struct ConfigurationGeneralView: View {
         case .notDetermined:
             "Enable microphone access now or allow it when starting the first recording."
         case .granted:
-            "DictationApp can record from the microphone selected below."
+            "DictationApp can record from the selected microphone."
         case .denied:
             "Recording remains unavailable until access is enabled in System Settings."
         case .restricted:
@@ -327,6 +333,87 @@ struct ConfigurationGeneralView: View {
     }
 }
 
+private struct ConfigurationFlowSummary: View {
+    let viewModel: ConfigurationViewModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(viewModel.hasUnsavedChanges ? "Draft dictation flow" : "Dictation flow")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 12) {
+                    microphone
+                    transcription
+                    cleanup
+                }
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    microphone
+                    nextStage
+                    transcription
+                    nextStage
+                    cleanup
+                }
+            }
+        }
+        .configurationPanel()
+    }
+
+    private var microphone: some View {
+        stage(
+            "Microphone",
+            systemImage: "mic",
+            value: viewModel.audioInputDisplayName(for: viewModel.audioInputPreference)
+        )
+    }
+
+    private var transcription: some View {
+        stage(
+            "Transcription",
+            systemImage: "waveform",
+            value: viewModel.descriptor(for: viewModel.transcriptionProviderChoice)?
+                .displayName ?? "Unavailable"
+        )
+    }
+
+    private var cleanup: some View {
+        stage(
+            "Cleanup",
+            systemImage: "wand.and.stars",
+            value: viewModel.postProcessingEnabled
+                ? viewModel.descriptor(for: viewModel.postProcessingProviderChoice)?
+                    .displayName ?? "Unavailable"
+                : "Off"
+        )
+    }
+
+    private var nextStage: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.tertiary)
+            .padding(.top, 3)
+            .accessibilityHidden(true)
+    }
+
+    private func stage(_ title: String, systemImage: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(ConfigurationAppearance.emblem)
+            Text(value)
+                .font(.callout.weight(.semibold))
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .help(value)
+    }
+}
+
 private struct ConfigurationPermissionRow<Action: View>: View {
     let title: String
     let statusTitle: String
@@ -350,18 +437,26 @@ private struct ConfigurationPermissionRow<Action: View>: View {
 
     var body: some View {
         ConfigurationSettingRow(title) {
-            HStack(spacing: 10) {
-                ConfigurationPermissionStatusLabel(
-                    title: statusTitle,
-                    granted: granted
-                )
-                action
-                    .fixedSize()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    status
+                    action
+                }
+                .fixedSize(horizontal: true, vertical: false)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    status
+                    action
+                }
             }
         } detail: {
             Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var status: some View {
+        ConfigurationPermissionStatusLabel(title: statusTitle, granted: granted)
     }
 }

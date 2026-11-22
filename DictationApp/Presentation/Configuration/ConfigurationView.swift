@@ -11,8 +11,8 @@ struct ConfigurationView: View {
                 ConfigurationSidebar(viewModel: viewModel)
                     .navigationSplitViewColumnWidth(
                         min: 170,
-                        ideal: 184,
-                        max: 210
+                        ideal: 198,
+                        max: 224
                     )
             } detail: {
                 ConfigurationDetail(viewModel: viewModel)
@@ -22,6 +22,7 @@ struct ConfigurationView: View {
             ConfigurationFooter(viewModel: viewModel)
         }
         .frame(minWidth: 720, minHeight: 540)
+        .background(ConfigurationAppearance.canvas)
     }
 }
 
@@ -61,37 +62,53 @@ private struct ConfigurationSidebar: View {
     @Bindable var viewModel: ConfigurationViewModel
 
     var body: some View {
-        List(
-            SettingsDestination.allCases,
-            selection: $viewModel.selectedDestination
-        ) { destination in
-            HStack(spacing: 10) {
-                Label(
-                    destination.title,
-                    systemImage: destination.systemImage
-                )
-
-                Spacer()
-
-                if viewModel.hasIssue(in: destination) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.red)
-                        .accessibilityLabel("Contains an error")
-                } else if viewModel.isDirty(destination) {
-                    Circle()
-                        .fill(Color.accentColor)
-                        .frame(width: 7, height: 7)
-                        .accessibilityLabel("Contains unsaved changes")
-                } else if hasAttention(destination) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .accessibilityLabel("Needs attention")
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 9) {
+                ConfigurationEmblem(systemImage: "waveform", size: 32)
+                Text("DictationApp")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
             }
-            .tag(destination)
+            .padding(.horizontal, 14)
+
+            List(
+                SettingsDestination.allCases,
+                selection: $viewModel.selectedDestination
+            ) { destination in
+                HStack(spacing: 8) {
+                    Label(destination.title, systemImage: destination.systemImage)
+                        .font(.body.weight(.medium))
+
+                    Spacer(minLength: 4)
+                    indicator(for: destination)
+                }
+                .padding(.vertical, 5)
+                .tag(destination)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .accessibilityLabel("Settings categories")
         }
-        .listStyle(.sidebar)
-        .accessibilityLabel("Settings categories")
+        .padding(.top, 16)
+        .background(ConfigurationAppearance.sidebar)
+    }
+
+    @ViewBuilder
+    private func indicator(for destination: SettingsDestination) -> some View {
+        if viewModel.hasIssue(in: destination) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(ConfigurationAppearance.error)
+                .accessibilityLabel("Contains an error")
+        } else if viewModel.isDirty(destination) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 6))
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Contains unsaved changes")
+        } else if hasAttention(destination) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(ConfigurationAppearance.attention)
+                .accessibilityLabel("Needs attention")
+        }
     }
 
     private func hasAttention(
@@ -177,10 +194,10 @@ private struct ConfigurationFooter: View {
                     systemImage: "checkmark.circle.fill",
                     style: .success
                 )
-            } else {
+            } else if let footerDetail {
                 ConfigurationStatusLabel(
                     title: footerDetail,
-                    systemImage: "lock.shield",
+                    systemImage: "slider.horizontal.3",
                     style: .neutral
                 )
             }
@@ -210,17 +227,20 @@ private struct ConfigurationFooter: View {
                 .disabled(!viewModel.canSave)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.regularMaterial)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 11)
+        .background(ConfigurationAppearance.surface)
     }
 
-    private var footerDetail: String {
+    private var footerDetail: String? {
+        if viewModel.isValidating {
+            return "Validating changes…"
+        }
         switch viewModel.presentationMode {
         case .full:
-            "Changes apply together after validation."
+            return viewModel.hasUnsavedChanges ? "Unsaved changes" : nil
         case .transcriptionRepair:
-            "Retry remains a separate explicit action."
+            return "Retry remains a separate action."
         }
     }
 }

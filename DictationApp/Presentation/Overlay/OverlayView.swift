@@ -10,91 +10,132 @@ struct OverlayView: View {
     let onRepairTranscription: () -> Void
     let onDismiss: () -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private let shadowInset: CGFloat = 4
+
     var body: some View {
-        presentationContent
-            .background(.regularMaterial, in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
+        Group {
+            if usesAttentionPresentation {
+                attentionContent
+                    .background {
+                        surface(
+                            in: RoundedRectangle(cornerRadius: 18),
+                            material: .thickMaterial
+                        )
+                    }
+            } else {
+                compactContent
+                    .background {
+                        surface(in: Capsule(), material: .regularMaterial)
+                    }
             }
-            .shadow(color: .black.opacity(0.14), radius: 8, y: 3)
-            .accessibilityElement(children: .contain)
+        }
+        .padding(shadowInset)
+        .accessibilityElement(children: .contain)
     }
 
-    @ViewBuilder
-    private var presentationContent: some View {
-        if usesAttentionPresentation {
-            attentionContent
-        } else {
-            compactContent
-        }
+    private func surface<S: InsettableShape>(
+        in shape: S,
+        material: Material
+    ) -> some View {
+        let borderOpacity = colorSchemeContrast == .increased ? 0.3 : 0.13
+        return shape
+            .fill(material)
+            .overlay {
+                shape.strokeBorder(
+                    Color.primary.opacity(borderOpacity),
+                    lineWidth: 1
+                )
+            }
+            .shadow(
+                color: .black.opacity(colorScheme == .dark ? 0.24 : 0.16),
+                radius: 4,
+                y: 2
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private var compactContent: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 7) {
             stateIndicator
 
             Text(compactTitle)
-                .font(
-                    .system(
-                        .callout,
-                        design: .rounded,
-                        weight: .semibold
-                    )
-                )
+                .font(.callout.weight(.semibold))
+                .monospacedDigit()
                 .foregroundStyle(compactTitleColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .accessibilityLabel(compactTitle)
 
             compactControls
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: 360)
+        .padding(.vertical, 6)
+        .frame(
+            maxWidth: (dynamicTypeSize.isAccessibilitySize ? 520 : 360)
+                - 2 * shadowInset
+        )
         .fixedSize(horizontal: false, vertical: true)
     }
 
     private var attentionContent: some View {
-        HStack(spacing: 12) {
-            stateIndicator
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                stateIndicator
+                    .frame(width: 28, height: 28)
+                    .background(.orange.opacity(0.12), in: .rect(cornerRadius: 8))
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(
-                        .system(
-                            .body,
-                            design: .rounded,
-                            weight: .semibold
-                        )
-                    )
-                    .lineLimit(1)
-
-                if let detail {
-                    Text(detail)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(detailColor)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.headline)
+                        .monospacedDigit()
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if let detail {
+                        Text(detail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider()
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    attentionControls
+                }
+                .fixedSize(horizontal: true, vertical: false)
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    attentionControls
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            attentionControls
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(14)
         .frame(
-            minWidth: 440,
-            idealWidth: attentionIdealWidth,
-            maxWidth: 520
+            minWidth: 440 - 2 * shadowInset,
+            idealWidth: attentionIdealWidth - 2 * shadowInset,
+            maxWidth: 520 - 2 * shadowInset
         )
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
     private var compactControls: some View {
         switch state {
         case .recording:
-            compactStopButton
-            compactCancelButton
+            HStack(spacing: 4) {
+                compactStopButton
+                compactCancelButton
+            }
+            .fixedSize()
         case
             .preparing,
             .finalizing,
@@ -103,7 +144,7 @@ struct OverlayView: View {
             .postProcessing,
             .inserting,
             .tooShort:
-            compactCancelButton
+            compactCancelButton.fixedSize()
         case
             .inserted,
             .rawTranscriptFallback,
@@ -215,11 +256,15 @@ struct OverlayView: View {
     private var stateIndicator: some View {
         switch state {
         case .recording:
-            Circle()
-                .fill(.red)
-                .frame(width: 8, height: 8)
-                .shadow(color: .red.opacity(0.45), radius: 2)
-                .accessibilityLabel("Recording")
+            ZStack {
+                Circle()
+                    .fill(.red.opacity(0.16))
+                    .frame(width: 16, height: 16)
+                Circle()
+                    .fill(.red)
+                    .frame(width: 7, height: 7)
+            }
+            .accessibilityLabel("Recording")
         case .completed, .inserted:
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
@@ -435,20 +480,6 @@ struct OverlayView: View {
             .tooShort,
             .cancelled:
             nil
-        }
-    }
-
-    private var detailColor: Color {
-        switch state {
-        case
-            .insertionUnverified,
-            .clipboardFallback,
-            .transcriptionFailed,
-            .captureFailed,
-            .failed:
-            .orange
-        default:
-            .secondary
         }
     }
 

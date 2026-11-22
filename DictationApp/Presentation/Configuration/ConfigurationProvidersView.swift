@@ -7,9 +7,10 @@ struct ConfigurationProvidersView: View {
         NavigationStack {
             ConfigurationPage(
                 title: "Providers",
-                detail: "Configure providers and review where they process data."
+                detail: "Manage provider setup and see where your data is processed.",
+                systemImage: SettingsDestination.providers.systemImage
             ) {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     ForEach(viewModel.providerRegistry.settingsModules) {
                         module in
                         Button {
@@ -61,109 +62,58 @@ private struct ConfigurationProviderDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Button("Providers", systemImage: "chevron.left") {
-                    viewModel.showProvidersList()
-                }
-                .buttonStyle(.borderless)
-                .controlSize(.small)
-                .keyboardShortcut("[", modifiers: .command)
-                .help("Back to Providers")
-                .accessibilityLabel("Back to Providers")
+            Button("Providers", systemImage: "chevron.left") {
+                viewModel.showProvidersList()
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("[", modifiers: .command)
+            .help("Back to Providers")
+            .accessibilityLabel("Back to Providers")
+            .padding(.horizontal, 28)
+            .padding(.top, 14)
 
-                if let descriptor = viewModel.descriptor(for: providerID) {
-                    HStack(spacing: 10) {
-                        Image(systemName: descriptor.systemImage)
-                            .font(.title2)
-                            .foregroundStyle(.tint)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(descriptor.displayName)
-                                .font(.title3.weight(.semibold))
-                            Text(providerDetail)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
+            if let module = viewModel.providerRegistry.settingsModule(for: providerID) {
+                ConfigurationPage(
+                    title: module.descriptor.displayName,
+                    detail: providerDetail,
+                    systemImage: module.descriptor.systemImage
+                ) {
+                    ConfigurationSection(
+                        "Configuration",
+                        systemImage: providerID == .openAI ? "key" : "internaldrive"
+                    ) {
+                        module.makeDetailView()
+                    }
+                    .configurationPanel()
+
+                    if providerID == .appleOnDevice, viewModel.isFirstRun {
+                        Button("Use OpenAI instead") {
+                            viewModel.useOpenAIForTranscription()
                         }
                     }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
 
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if
-                        let module =
-                            viewModel.providerRegistry.settingsModule(
-                                for: providerID
-                            )
-                    {
-                        ConfigurationSection(
-                            "Configuration",
-                            systemImage:
-                                providerID == .openAI
-                                ? "key"
-                                : "internaldrive"
-                        ) {
-                            module.makeDetailView()
-                        }
-
-                        if
-                            providerID == .appleOnDevice,
-                            viewModel.isFirstRun
-                        {
-                            Button("Use OpenAI instead") {
-                                viewModel.useOpenAIForTranscription()
-                            }
-                        }
-
-                        ConfigurationSection(
-                            "Capabilities",
-                            systemImage: "checklist"
-                        ) {
-                            ForEach(
-                                module.descriptor.capabilities.keys.sorted {
-                                    $0.rawValue < $1.rawValue
-                                },
-                                id: \.self
-                            ) { capability in
-                                if
-                                    let metadata =
-                                        module.descriptor.capabilities[
-                                            capability
-                                        ]
-                                {
-                                    ConfigurationSettingRow(
-                                        capability.displayName
-                                    ) {
-                                        Text(
-                                            metadata.processingLocation
-                                                .displayName
-                                        )
-                                    }
+                    ConfigurationSection("Capabilities", systemImage: "checklist") {
+                        ForEach(
+                            module.descriptor.capabilities.keys.sorted {
+                                $0.rawValue < $1.rawValue
+                            },
+                            id: \.self
+                        ) { capability in
+                            if let metadata = module.descriptor.capabilities[capability] {
+                                ConfigurationSettingRow(capability.displayName) {
+                                    Text(metadata.processingLocation.displayName)
                                 }
                             }
                         }
+                    }
 
-                        if
-                            let issue = viewModel.issue(
-                                for: .credential(providerID)
-                            )
-                        {
-                            ConfigurationIssueLabel(
-                                message: issue.message
-                            )
-                        }
+                    if let issue = viewModel.issue(for: .credential(providerID)) {
+                        ConfigurationIssueLabel(message: issue.message)
                     }
                 }
-                .frame(maxWidth: 680, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
             }
         }
+        .background(ConfigurationAppearance.canvas)
     }
 
     private var providerDetail: String {
@@ -180,49 +130,56 @@ private struct ConfigurationProviderDetailView: View {
 
 private struct ConfigurationProviderRow: View {
     @ObservedObject var module: AnyProviderSettingsModule
+    @State private var isHovered = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: module.descriptor.systemImage)
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 28)
+        HStack(alignment: .center, spacing: 12) {
+            ConfigurationEmblem(systemImage: module.descriptor.systemImage, size: 36)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(module.descriptor.displayName)
                     .font(.headline)
 
-                HStack(spacing: 5) {
-                    ForEach(
-                        module.descriptor.capabilities.keys.sorted {
-                            $0.rawValue < $1.rawValue
-                        },
-                        id: \.self
-                    ) { capability in
-                        Text(capability.displayName)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.quaternary)
-                            .clipShape(Capsule())
-                    }
+                Text(capabilities)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if dynamicTypeSize.isAccessibilitySize {
+                    ConfigurationProviderStatus(readiness: module.readiness)
                 }
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 8)
 
-            ConfigurationProviderStatus(readiness: module.readiness)
+            if !dynamicTypeSize.isAccessibilitySize {
+                ConfigurationProviderStatus(readiness: module.readiness)
+            }
             Image(systemName: "chevron.right")
-                .foregroundStyle(.tertiary)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.quaternary.opacity(0.28), in: .rect(cornerRadius: 8))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            isHovered ? ConfigurationAppearance.highlight : ConfigurationAppearance.surface,
+            in: .rect(cornerRadius: 12)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(.quaternary, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(ConfigurationAppearance.border, lineWidth: 1)
+                .allowsHitTesting(false)
         }
-        .contentShape(.rect(cornerRadius: 8))
+        .contentShape(.rect(cornerRadius: 12))
+        .onHover { isHovered = $0 }
+    }
+
+    private var capabilities: String {
+        module.descriptor.capabilities.keys
+            .sorted { $0.rawValue < $1.rawValue }
+            .map(\.displayName)
+            .joined(separator: " · ")
     }
 }
 

@@ -3,15 +3,16 @@ import Carbon.HIToolbox
 import SwiftUI
 
 struct ShortcutRecorder: NSViewRepresentable {
+    @Environment(\.isEnabled) private var environmentIsEnabled
+
     let shortcut: GlobalShortcut
-    let isEnabled: Bool
     let onCandidate: (GlobalShortcut) -> Void
 
     func makeNSView(context: Context) -> ShortcutRecorderControl {
         let control = ShortcutRecorderControl()
         control.onCandidate = onCandidate
         control.shortcut = shortcut
-        control.isEnabled = isEnabled
+        control.isEnabled = environmentIsEnabled
         return control
     }
 
@@ -21,7 +22,7 @@ struct ShortcutRecorder: NSViewRepresentable {
     ) {
         control.onCandidate = onCandidate
         control.shortcut = shortcut
-        control.isEnabled = isEnabled
+        control.isEnabled = environmentIsEnabled
         control.refreshTitle()
         control.refreshAccessibility()
     }

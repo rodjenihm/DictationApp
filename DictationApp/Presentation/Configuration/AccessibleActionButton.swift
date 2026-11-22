@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct AccessibleActionButton: NSViewRepresentable {
+    @Environment(\.appearsActive) private var appearsActive
     @Environment(\.isEnabled) private var environmentIsEnabled
 
     let title: String
@@ -24,20 +25,21 @@ struct AccessibleActionButton: NSViewRepresentable {
     }
 
     private func update(_ control: AccessibleButtonControl) {
-        control.title = title
         control.onAction = action
         control.isEnabled = environmentIsEnabled
         control.isDefaultAction = isDefault
         control.keyEquivalent = isDefault ? "\r" : ""
         control.keyEquivalentModifierMask = []
-        control.bezelColor =
-            isDefault && environmentIsEnabled
-            ? .controlAccentColor
-            : nil
-        control.contentTintColor =
-            isDefault && environmentIsEnabled
-            ? .white
-            : nil
+        let usesAccentBezel = isDefault && environmentIsEnabled && appearsActive
+        control.bezelColor = usesAccentBezel ? .controlAccentColor : nil
+        if usesAccentBezel {
+            control.attributedTitle = NSAttributedString(
+                string: title,
+                attributes: [.foregroundColor: NSColor.white]
+            )
+        } else {
+            control.title = title
+        }
         control.setAccessibilityLabel(accessibilityLabel)
         control.setAccessibilityHelp(accessibilityHelp)
     }

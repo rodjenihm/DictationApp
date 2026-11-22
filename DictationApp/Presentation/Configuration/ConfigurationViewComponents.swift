@@ -3,43 +3,64 @@ import SwiftUI
 struct ConfigurationPage<Content: View>: View {
     let title: String
     let detail: String
+    let systemImage: String
     private let content: Content
 
     init(
         title: String,
         detail: String,
+        systemImage: String,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.detail = detail
+        self.systemImage = systemImage
         self.content = content()
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                header
+                content
+            }
+            .frame(maxWidth: 680, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(ConfigurationAppearance.canvas)
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            ConfigurationEmblem(systemImage: systemImage)
+
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.title3.weight(.semibold))
+                    .font(.largeTitle.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
                 Text(detail)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    content
-                }
-                .frame(maxWidth: 680, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(.bottom, 4)
+    }
+}
+
+struct ConfigurationEmblem: View {
+    let systemImage: String
+    var size: CGFloat = 48
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size * 0.42, weight: .semibold))
+            .foregroundStyle(ConfigurationAppearance.emblem)
+            .frame(width: size, height: size)
+            .background(ConfigurationAppearance.highlight, in: .rect(cornerRadius: size * 0.25))
+            .accessibilityHidden(true)
     }
 }
 
@@ -62,12 +83,24 @@ struct ConfigurationSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             Label(title, systemImage: systemImage)
                 .font(.headline)
-                .foregroundStyle(.primary)
+                .labelStyle(ConfigurationSectionLabelStyle())
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 10) {
                 content
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+private struct ConfigurationSectionLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 7) {
+            configuration.icon
+                .foregroundStyle(ConfigurationAppearance.emblem)
+                .accessibilityHidden(true)
+            configuration.title
         }
     }
 }
@@ -178,6 +211,17 @@ struct ConfigurationFormSupplementary<Content: View>: View {
 }
 
 extension View {
+    func configurationPanel() -> some View {
+        padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ConfigurationAppearance.surface, in: .rect(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(ConfigurationAppearance.border, lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+    }
+
     func configurationFieldControl() -> some View {
         frame(
             width: ConfigurationFormMetrics.fieldWidth,
@@ -209,13 +253,13 @@ enum ConfigurationStatusStyle {
         case .neutral:
             .secondary
         case .success:
-            .green
+            ConfigurationAppearance.success
         case .attention:
-            .orange
+            ConfigurationAppearance.attention
         case .error:
-            .red
+            ConfigurationAppearance.error
         case .pending:
-            .blue
+            .accentColor
         }
     }
 }
