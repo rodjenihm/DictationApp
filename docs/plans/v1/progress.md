@@ -500,3 +500,4 @@ build evidence and remaining runtime verification.
 - [Dictation pipeline latency](features/09-dictation-pipeline-latency.md)
 - [OpenAI model migration](features/10-openai-model-migration.md)
 - [Live Apple On-Device transcription](features/11-live-apple-transcription.md)
+- [OpenAI cleanup observability](features/12-openai-cleanup-observability.md)

@@ -113,15 +113,34 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
             sessionID: request.diagnosticSessionID
         )
 
+        let initialServiceTier = payload.serviceTier
+        var attempt = 0
         return try await retryExecutor.execute(
             deadline: request.deadline,
             diagnosticSessionID: request.diagnosticSessionID
         ) { [self] in
             try Task.checkCancellation()
+            attempt += 1
+            let serviceTier = payload.serviceTier
+            let diagnostics = request.diagnosticSessionID.map { sessionID in
+                let requestedTier = switch serviceTier {
+                case .fast: "fast"
+                case .standard: "standard"
+                case nil: "project_default"
+                }
+                return OpenAICleanupRequestDiagnostics(
+                    sessionID: sessionID,
+                    attempt: attempt,
+                    requestedTier: requestedTier,
+                    isFastRejectionFallback:
+                        initialServiceTier == .fast && serviceTier == .standard
+                )
+            }
             do {
                 return try await perform(
                     urlRequest,
-                    serviceTier: payload.serviceTier
+                    serviceTier: serviceTier,
+                    diagnostics: diagnostics
                 )
             } catch is OpenAIFastTierRejected {
                 payload.serviceTier = .standard
@@ -255,25 +274,35 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
 
     private func perform(
         _ request: URLRequest,
-        serviceTier: OpenAICleanupPayload.ServiceTier?
+        serviceTier: OpenAICleanupPayload.ServiceTier?,
+        diagnostics: OpenAICleanupRequestDiagnostics?
     ) async throws -> String {
         let data: Data
         let response: URLResponse
+        var outcome = "operation"
+        var reportedTier: String?
+        defer {
+            diagnostics?.recordOutcome(outcome, reportedTier: reportedTier)
+        }
 
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request, delegate: diagnostics)
         } catch is CancellationError {
+            outcome = "cancelled"
             throw ProviderOperationFailure.cancelled
         } catch let error as URLError {
             if error.code == .cancelled {
+                outcome = "cancelled"
                 throw ProviderOperationFailure.cancelled
             }
+            outcome = "transient"
             throw ProviderOperationFailure.transient(
                 message:
                     "OpenAI could not be reached for post-processing.",
                 retryAfter: nil
             )
         } catch {
+            outcome = "transient"
             throw ProviderOperationFailure.transient(
                 message:
                     "OpenAI could not be reached for post-processing.",
@@ -281,7 +310,10 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
             )
         }
 
-        try Task.checkCancellation()
+        if Task.isCancelled {
+            outcome = "cancelled"
+            throw CancellationError()
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ProviderOperationFailure.operation(
@@ -300,18 +332,17 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
                 statusCode: httpResponse.statusCode,
                 error: providerError
             ) {
+                outcome = "fast_tier_rejected"
                 throw OpenAIFastTierRejected()
             }
-            throw failure(for: httpResponse, providerError: providerError)
+            let operationFailure = failure(for: httpResponse, providerError: providerError)
+            outcome = operationFailure.logClassification
+            throw operationFailure
         }
 
-        guard
-            let response = try? decoder.decode(
-                ResponsesResponse.self,
-                from: data
-            ),
-            response.status == "completed"
-        else {
+        let decoded = try? decoder.decode(ResponsesResponse.self, from: data)
+        reportedTier = decoded?.serviceTier
+        guard let response = decoded, response.status == "completed" else {
             throw ProviderOperationFailure.operation(
                 message:
                     "OpenAI did not complete the post-processing request."
@@ -330,6 +361,7 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
                     "OpenAI returned no post-processed transcript."
             )
         }
+        outcome = "succeeded"
         return text
     }
 
@@ -462,6 +494,20 @@ private struct RawTranscriptInput: Encodable {
 private struct ResponsesResponse: Decodable {
     let status: String
     let output: [OutputItem]
+    let serviceTier: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case output
+        case serviceTier = "service_tier"
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+        output = try container.decode([OutputItem].self, forKey: .output)
+        serviceTier = try? container.decode(String.self, forKey: .serviceTier)
+    }
 
     struct OutputItem: Decodable {
         let content: [Content]

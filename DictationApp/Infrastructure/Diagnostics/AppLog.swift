@@ -29,6 +29,10 @@ enum AppLog {
         subsystem: subsystem,
         category: "insertion"
     )
+    nonisolated static let cleanup = Logger(
+        subsystem: subsystem,
+        category: "cleanup"
+    )
     private nonisolated static let latency = Logger(
         subsystem: subsystem,
         category: "latency"
