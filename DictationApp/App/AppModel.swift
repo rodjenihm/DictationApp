@@ -199,6 +199,9 @@ final class AppModel: ObservableObject {
         }
 
         refreshStatus()
+        Task { @MainActor [weak self] in
+            self?.overlayWindowController.prewarm()
+        }
     }
 
     func applicationDidBecomeActive() {

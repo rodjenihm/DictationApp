@@ -60,13 +60,20 @@ final class CoreAudioRecorder: AudioRecorder {
             preparingSessionIdentifiers.remove(sessionIdentifier)
         }
 
+        let discoveryBeganAt = ContinuousClock.now
         let candidates = audioInputDeviceService.captureCandidates(
             for: audioInputPreference
+        )
+        AppLog.recordLatency(
+            "capture_input_discovery",
+            since: discoveryBeganAt,
+            sessionID: sessionIdentifier
         )
         guard !candidates.isEmpty else {
             throw AudioRecorderError.noInputDevice
         }
 
+        let outputSetupBeganAt = ContinuousClock.now
         let outputURL: URL
         do {
             outputURL = try fileStore.makeRecordingURL(
@@ -75,6 +82,11 @@ final class CoreAudioRecorder: AudioRecorder {
         } catch {
             throw AudioRecorderError.cannotConfigure
         }
+        AppLog.recordLatency(
+            "capture_output_setup",
+            since: outputSetupBeganAt,
+            sessionID: sessionIdentifier
+        )
 
         do {
             var preparedContext: CoreAudioCaptureContext?
@@ -126,7 +138,13 @@ final class CoreAudioRecorder: AudioRecorder {
             }
 
             context = preparedContext
+            let observersBeganAt = ContinuousClock.now
             installFailureObservers(for: preparedContext)
+            AppLog.recordLatency(
+                "capture_observer_installation",
+                since: observersBeganAt,
+                sessionID: sessionIdentifier
+            )
             AppLog.recordLatency(
                 "capture_preparation",
                 since: preparationBeganAt,
@@ -342,32 +360,46 @@ final class CoreAudioRecorder: AudioRecorder {
             }
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            runtime.queue.async {
-                [runtime, onFirstBuffer, onWriteFailure] in
-                do {
-                    let preparedContext = try CoreAudioCaptureContext.make(
-                        runtime: runtime,
-                        deviceID: candidate.deviceID,
-                        outputURL: outputURL,
-                        inputDeviceName: candidate.name,
-                        isUsingFallback: candidate.isFallback,
-                        profile: profile,
-                        sessionIdentifier: sessionIdentifier,
-                        includeLiveAudio: includeLiveAudio,
-                        onFirstBuffer: onFirstBuffer,
-                        onWriteFailure: onWriteFailure
+        let (preparedContext, configuredAt):
+            (CoreAudioCaptureContext, ContinuousClock.Instant) =
+            try await withCheckedThrowingContinuation { continuation in
+                let queuedAt = ContinuousClock.now
+                runtime.queue.async {
+                    [runtime, onFirstBuffer, onWriteFailure] in
+                    AppLog.recordLatency(
+                        "capture_configuration_queue_wait",
+                        since: queuedAt,
+                        sessionID: sessionIdentifier
                     )
-                    continuation.resume(returning: preparedContext)
-                } catch let error as AudioRecorderError {
-                    continuation.resume(throwing: error)
-                } catch {
-                    continuation.resume(
-                        throwing: AudioRecorderError.cannotConfigure
-                    )
+                    do {
+                        let context = try CoreAudioCaptureContext.make(
+                            runtime: runtime,
+                            deviceID: candidate.deviceID,
+                            outputURL: outputURL,
+                            inputDeviceName: candidate.name,
+                            isUsingFallback: candidate.isFallback,
+                            profile: profile,
+                            sessionIdentifier: sessionIdentifier,
+                            includeLiveAudio: includeLiveAudio,
+                            onFirstBuffer: onFirstBuffer,
+                            onWriteFailure: onWriteFailure
+                        )
+                        continuation.resume(returning: (context, .now))
+                    } catch let error as AudioRecorderError {
+                        continuation.resume(throwing: error)
+                    } catch {
+                        continuation.resume(
+                            throwing: AudioRecorderError.cannotConfigure
+                        )
+                    }
                 }
             }
-        }
+        AppLog.recordLatency(
+            "capture_configuration_resume",
+            since: configuredAt,
+            sessionID: sessionIdentifier
+        )
+        return preparedContext
     }
 
     private func handleFirstAcceptedBuffer(
@@ -729,6 +761,7 @@ nonisolated private final class CoreAudioCaptureContext:
         onFirstBuffer: @escaping @Sendable (UUID, ContinuousClock.Instant) -> Void,
         onWriteFailure: @escaping @Sendable (UUID) -> Void
     ) throws -> CoreAudioCaptureContext {
+        let unitSetupBeganAt = ContinuousClock.now
         var description = AudioComponentDescription(
             componentType: kAudioUnitType_Output,
             componentSubType: kAudioUnitSubType_HALOutput,
@@ -863,10 +896,21 @@ nonisolated private final class CoreAudioCaptureContext:
                 throw AudioRecorderError.cannotConfigure
             }
 
+            AppLog.recordLatency(
+                "capture_audio_unit_setup",
+                since: unitSetupBeganAt,
+                sessionID: sessionIdentifier
+            )
+            let writerSetupBeganAt = ContinuousClock.now
             let writer = try StreamingM4AWriter(
                 url: outputURL,
                 inputFormat: inputFormat,
                 profile: profile
+            )
+            AppLog.recordLatency(
+                "capture_writer_setup",
+                since: writerSetupBeganAt,
+                sessionID: sessionIdentifier
             )
             let preparedContext = CoreAudioCaptureContext(
                 runtime: runtime,
@@ -902,7 +946,13 @@ nonisolated private final class CoreAudioCaptureContext:
                     UInt32(MemoryLayout<AURenderCallbackStruct>.size)
                 )
             )
+            let initializationBeganAt = ContinuousClock.now
             try requireNoError(AudioUnitInitialize(audioUnit))
+            AppLog.recordLatency(
+                "capture_audio_unit_initialize",
+                since: initializationBeganAt,
+                sessionID: sessionIdentifier
+            )
             preparedContext.isInitialized = true
             return preparedContext
         } catch {

@@ -98,6 +98,51 @@ The [OpenAI model migration plan](10-openai-model-migration.md) records the
 replacement of the retiring cleanup and transcription models and the
 matching changes to production and Settings requests.
 
+## Follow-up · Capture startup
+
+1. Break down the current shortcut-to-first-buffer samples and profile
+   recorder preparation in an isolated process on the built-in input.
+2. Prepare the hidden overlay off the shortcut path. Preserve the initial
+   preparing state and resolve the display when presenting the overlay.
+3. Add session-correlated preparation timings. Separate queue wait and
+   main-actor resume latency from Core Audio and writer setup.
+4. Play the recording cue after the capture-ready transition and remove the
+   duplicate synchronous system sound lookup.
+5. Build Debug and Release and compare the isolated preparation and overlay
+   measurements. Use live sample timing to calibrate further changes.
+
+### Capture startup evidence
+
+- Two retained dictations reached first audio in 598 and 841 ms. Capture
+  preparation accounted for 460 and 688 ms respectively. Both took about
+  59 ms from requesting audio unit start to the first accepted buffer.
+- In a release-optimized isolated probe on the built-in input, preparing
+  and tearing down the recorder without starting capture took 49 ms on
+  the first run and 23–25 ms on immediate repeats with sound omitted.
+- Queuing a muted system cue on the main actor during preparation reproduced
+  the long stall. Across three fresh processes per order, the median
+  time to prepared capture was 398 ms with the cue queued before setup
+  and 44 ms with the cue played after setup. First playback calls took
+  356–563 ms. Repeated preparation samples overlapped across both orders.
+  The probe stopped before audio input and issued no provider request.
+- Across six fresh processes per condition, first overlay preparation and
+  positioning fell from a median of 39.6 ms to 0.8 ms after prewarming.
+  The 129 by 37 point panel retained its size. The probe excluded window
+  ordering and microphone activation.
+- Unsigned Debug and Release arm64 builds passed with Xcode 27.2. The
+  capture path still resolves an input each session and publishes recording
+  only after the writer accepts a buffer. The new timing events run outside
+  the real-time callback and contain only durations and session IDs.
+  Three consecutive prepare-and-cancel cycles passed with the updated
+  recorder in the isolated process.
+- A user-run dictation of about 70 seconds reached its first accepted audio
+  240 ms after the shortcut. Recorder preparation took 101 ms, including
+  55 ms for audio unit configuration and 40 ms for writer setup. Apple live
+  transcription returned its final result in 363 ms. Luna cleanup completed
+  in 3.013 seconds on the first attempt, with Fast mode requested and
+  served. The app dispatched paste 3.577 seconds after Stop and confirmed
+  delivery. This is one live observation after the startup changes.
+
 ## Implementation evidence
 
 - Unsigned macOS arm64 Debug and Release builds passed with Xcode 27.2.

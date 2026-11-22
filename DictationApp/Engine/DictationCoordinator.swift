@@ -273,22 +273,23 @@ final class DictationCoordinator: ObservableObject {
             try await ensureMicrophonePermission()
             try requireCurrent(token)
 
-            soundCuePlayer.enqueue(
-                .recordingStarted,
-                enabled: soundCuesEnabled
-            )
             let liveProvider = providerResolver.transcriptionProvider(
                 for: configuration.transcriptionProvider
             ) as? any LiveTranscriptionProvider
+            let includeLiveAudio = liveProvider?.supportsLiveTranscription(
+                for: configuration.language
+            ) == true
+            AppLog.recordLatency(
+                "accepted_start_to_capture_preparation",
+                since: acceptedAt,
+                sessionID: token.id
+            )
             let prepared = try await recorder.prepare(
                 profile: configuration.recordingProfile,
                 audioInputPreference:
                     configuration.audioInputPreference,
                 sessionIdentifier: token.id,
-                includeLiveAudio:
-                    liveProvider?.supportsLiveTranscription(
-                        for: configuration.language
-                    ) == true
+                includeLiveAudio: includeLiveAudio
             )
             try requireCurrent(token)
 
@@ -332,6 +333,10 @@ final class DictationCoordinator: ObservableObject {
                 "accepted_start_to_recording",
                 since: acceptedAt,
                 sessionID: token.id
+            )
+            soundCuePlayer.enqueue(
+                .recordingStarted,
+                enabled: soundCuesEnabled
             )
 
             let recordingEvent = try await waitForRecordingEvent(

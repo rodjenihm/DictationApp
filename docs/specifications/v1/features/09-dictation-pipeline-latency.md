@@ -42,6 +42,15 @@ Keep diagnostics local. Log durations, stage names, attempt counts, and
 outcome classifications. Exclude dictated text, target text, audio, clipboard
 data, credentials, paths, and persistent device or target identifiers.
 
+### Capture startup detail
+
+Separate device discovery, recording directory setup, recorder queue wait,
+audio unit configuration, writer setup, audio unit initialization, the
+return to the main actor, and device observer installation. Keep the existing
+aggregate preparation and first-buffer timings for comparison. Measure once
+per relevant setup step and candidate, outside the real-time audio callback.
+Record the time between accepted start and recorder preparation separately.
+
 ## Local responsiveness
 
 - Publish recording presentation updates when the displayed second or
@@ -50,6 +59,12 @@ data, credentials, paths, and persistent device or target identifiers.
 - Keep recording readiness tied to the first writer-accepted buffer. Keep the
   microphone inactive between sessions and continue to resolve the current
   input according to the [microphone selection specification](05-microphone-selection.md).
+- Prepare the initial overlay view and layout after launch while it is
+  hidden. Resolve the target display and show the panel when a dictation
+  begins. The overlay must remain non-activating and ready to show if the
+  first dictation starts before preparation finishes.
+- Signal readiness with the start cue after the first owned buffer. Keep
+  sound loading and playback off the shortcut-to-capture path.
 - Apply the explicit Accessibility timeout required by the
   [runtime robustness specification](02-runtime-robustness-improvements.md#5-bounded-accessibility-messaging).
   End target probing on a messaging timeout. Limit optional editor-tree

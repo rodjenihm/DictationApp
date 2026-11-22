@@ -89,10 +89,11 @@ or keeping the microphone active while idle.
 
 - Replace the long system start sound with a bounded cue no longer than 120
   milliseconds.
-- Prepare the capture graph and play the start cue concurrently.
-- Do not wait for the start cue before accepting recording audio. Immediate
-  first-syllable capture takes precedence over excluding the compact cue from
-  recordings made through speakers.
+- Show the preparing overlay immediately. Load and play the start cue only
+  after the writer accepts the first audio buffer and the app enters the
+  recording state. The cue signals that the microphone is ready.
+- Keep the cue short when recording through speakers, where it may be picked
+  up as part of the captured audio.
 - Starting a new session may interrupt unfinished feedback from an older
   session.
 - If sounds are disabled, capture must not incur sound-related delay.
@@ -145,7 +146,7 @@ The implementation is accepted when:
   buffer within 200 milliseconds of the accepted start.
 - Engine activation normally reaches its first accepted buffer within 150
   milliseconds.
-- Preparation and cue playback overlap instead of adding their durations.
+- Preparing the cue and starting playback occur after the first buffer.
 - Transcription begins without waiting for the stop cue.
 - The app never presents recording before accepting the first buffer.
 - A slower device remains cancellable and presents an honest activation state.

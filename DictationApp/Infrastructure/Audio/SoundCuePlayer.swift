@@ -48,10 +48,7 @@ final class SoundCuePlayer {
         _ cue: SoundCue,
         enabled: Bool
     ) -> Task<Void, Never> {
-        guard
-            enabled,
-            NSSound(named: cue.systemSoundName) != nil
-        else {
+        guard enabled else {
             return Task {}
         }
 

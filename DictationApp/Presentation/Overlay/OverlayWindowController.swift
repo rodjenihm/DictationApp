@@ -33,52 +33,75 @@ final class OverlayWindowController {
         self.onDismiss = onDismiss
     }
 
+    func prewarm() {
+        guard panel == nil else {
+            return
+        }
+        preparePanel(for: .preparing)
+    }
+
     func present(_ state: OverlayViewState) {
         if sessionScreen == nil {
             sessionScreen = screenContainingPointer()
         }
-
-        let view = OverlayView(
-            state: state,
-            onStop: onStop,
-            onCancel: onCancel,
-            onRetry: onRetry,
-            onDiscard: onDiscard,
-            onTranscribePartial: onTranscribePartial,
-            onRepairTranscription: onRepairTranscription,
-            onDismiss: onDismiss
-        )
-
-        if let hostingController {
-            hostingController.rootView = view
-        } else {
-            let hostingController = NSHostingController(rootView: view)
-            self.hostingController = hostingController
-
-            let panel = makePanel()
-            panel.contentViewController = hostingController
-            self.panel = panel
-        }
-
-        guard let panel, let hostingController else {
+        preparePanel(for: state)
+        guard let panel else {
             return
         }
+        position(panel, on: sessionScreen)
+        panel.orderFrontRegardless()
+    }
 
-        hostingController.view.layoutSubtreeIfNeeded()
-        let fittingSize = hostingController.view.fittingSize
+    func dismiss() {
+        if let panel, panel.isVisible {
+            panel.orderOut(nil)
+        }
+        sessionScreen = nil
+    }
+
+    private func preparePanel(for state: OverlayViewState) {
+        let reusesPreparingView =
+            state == .preparing && hostingController?.rootView.state == .preparing
+        if !reusesPreparingView {
+            let view = OverlayView(
+                state: state,
+                onStop: onStop,
+                onCancel: onCancel,
+                onRetry: onRetry,
+                onDiscard: onDiscard,
+                onTranscribePartial: onTranscribePartial,
+                onRepairTranscription: onRepairTranscription,
+                onDismiss: onDismiss
+            )
+
+            if let hostingController {
+                hostingController.rootView = view
+            } else {
+                let hostingController = NSHostingController(rootView: view)
+                let panel = makePanel()
+                panel.contentViewController = hostingController
+                self.hostingController = hostingController
+                self.panel = panel
+            }
+        }
+
+        guard let panel, let view = hostingController?.view else {
+            return
+        }
+        guard
+            !reusesPreparingView || view.needsLayout
+                || view.needsUpdateConstraints
+        else {
+            return
+        }
+        view.layoutSubtreeIfNeeded()
+        let fittingSize = view.fittingSize
         panel.setContentSize(
             NSSize(
                 width: ceil(max(1, fittingSize.width)),
                 height: ceil(max(1, fittingSize.height))
             )
         )
-        position(panel, on: sessionScreen)
-        panel.orderFrontRegardless()
-    }
-
-    func dismiss() {
-        panel?.orderOut(nil)
-        sessionScreen = nil
     }
 
     private func makePanel() -> OverlayPanel {

@@ -4,6 +4,9 @@
 
 **Specification:** `docs/specifications/v1/features/04-recording-startup-performance.md`
 
+The [capture startup follow-up](09-dictation-pipeline-latency.md#follow-up--capture-startup)
+records the later change to play the start cue when capture is ready.
+
 ## Progress
 
 | Phase | Status | Outcome | Evidence |

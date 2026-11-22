@@ -403,7 +403,8 @@ Sound behavior:
 
 - Enable sound cues by default and provide one Settings toggle to disable all of them.
 - Use the current macOS output device and system output volume; do not add a separate volume control in the initial version.
-- Finish the start cue before microphone capture begins so it cannot become part of the recording.
+- Play the start cue once the recording writer accepts the first audio
+  buffer. See the [recording startup specification](features/04-recording-startup-performance.md#start-feedback).
 - Stop microphone capture before playing the stop or cancel cue.
 - Do not play sounds for every internal processing-state transition.
 - A raw post-processing fallback does not use the failure sound because insertion continues without user action.
