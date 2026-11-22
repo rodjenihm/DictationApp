@@ -6,7 +6,10 @@ A native macOS dictation utility that records speech, transcribes it through a u
 
 The app is local-first and bring-your-own-provider. Application state and credentials remain on the Mac, and the app has no user accounts, proprietary backend, registration, or cloud infrastructure.
 
-Local-first does not mean that every configured provider runs locally. In the initial version, recorded audio is sent directly from the app to OpenAI for transcription, and the raw transcript is also sent to OpenAI when optional post-processing is enabled. The UI must make each upload boundary clear.
+Each stage has its own processing location. OpenAI receives the recording
+when selected for transcription and the raw transcript when selected for
+cleanup. Apple On-Device transcription and Apple Intelligence cleanup run
+on the Mac. The UI must make each upload boundary clear.
 
 ## Platform and stack
 
@@ -180,7 +183,8 @@ Present post-processing as a provider-neutral capability:
 
 - First choose Disabled or Enabled. Disabled returns the raw transcript and is preselected on first launch.
 - When enabled, configure Provider and Model as separate fields.
-- The v1 provider picker contains OpenAI because it is the only implemented provider.
+- The cleanup picker offers OpenAI and, on eligible Macs, Apple Intelligence.
+  See the [on-device cleanup specification](features/13-on-device-cleanup.md).
 - Keep feature labels, settings keys, and domain types provider-neutral so additional providers become additional picker entries rather than new workflows.
 - Do not show placeholder or disabled providers that are not implemented.
 - Require an explicit opt-in before making post-processing API requests.
@@ -233,6 +237,8 @@ Validate post-processing output before using it:
 - Reject structurally implausible expansion that indicates the model added commentary or unrelated content.
 - Keep output limits proportional to the raw transcript and define the limits centrally rather than per model.
 - On validation failure, use the raw-transcript fallback.
+- Classify output validation failures in logs without including the
+  transcript or model response.
 
 Post-processing is a best-effort enhancement:
 
@@ -288,12 +294,14 @@ The app has no registration, login, or application account.
 
 On first launch, show a configuration window. Also show or reopen provider setup on the first dictation attempt without a viable transcription configuration:
 
-1. Show OpenAI as the supported transcription provider.
-2. Request and securely store the user's OpenAI API key.
-3. Allow selection of a supported OpenAI transcription model.
-4. Validate the configuration with a lightweight test.
-5. Ask the user to keep post-processing disabled or explicitly enable it.
-6. If enabled, configure its provider and model independently. OpenAI is the only provider available in the initial version.
+1. Configure Apple On-Device transcription where supported or use OpenAI.
+   See the [Apple On-Device specification](features/03-apple-on-device-transcription.md)
+   for first-run provider eligibility and language setup.
+2. For OpenAI, request and securely store the user's API key, and validate
+   their model and language selection with a lightweight request.
+3. Keep cleanup disabled until the user enables it. Choose its provider
+   independently of transcription, with Apple Intelligence available on
+   eligible Macs.
 
 Settings must allow changing providers and models whenever no session is actively recording or processing.
 

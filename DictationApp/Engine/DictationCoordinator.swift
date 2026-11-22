@@ -969,6 +969,7 @@ final class DictationCoordinator: ObservableObject {
         let request = PostProcessingRequest(
             rawTranscript: rawTranscript,
             model: configuration.postProcessingModel,
+            language: configuration.language,
             fastModeEnabled: configuration.postProcessingFastModeEnabled,
             deadline: deadline,
             diagnosticSessionID: token.id
@@ -1011,20 +1012,30 @@ final class DictationCoordinator: ObservableObject {
             }
 
             finalText = rawTranscript
-            fallbackMessage = failure == .deadlineExceeded
-                ? "Cleanup took too long."
-                : "Cleanup was unavailable."
+            if failure == .deadlineExceeded {
+                fallbackMessage = "Cleanup took too long."
+            } else if configuration.postProcessingProvider == .appleIntelligence {
+                fallbackMessage = failure.errorDescription
+            } else {
+                fallbackMessage = "Cleanup was unavailable."
+            }
         } catch {
+            try requireCurrent(token)
+            let rejection = error as? PostProcessingOutputPolicyError
             AppLog.providers.error(
-                "Post-processing stopped with unclassified failure"
+                "Post-processing fallback reason \(rejection?.rawValue ?? "unclassified", privacy: .public)"
             )
             AppLog.recordLatency(
-                "cleanup_fallback_invalid_output",
+                rejection == nil
+                    ? "cleanup_fallback_unclassified"
+                    : "cleanup_fallback_invalid_output",
                 since: cleanupStartedAt,
                 sessionID: token.id
             )
             finalText = rawTranscript
-            fallbackMessage = "Cleanup was unavailable."
+            fallbackMessage = rejection == nil
+                ? "Cleanup was unavailable."
+                : "Cleanup returned an unusable edit."
         }
 
         try await insertTranscript(

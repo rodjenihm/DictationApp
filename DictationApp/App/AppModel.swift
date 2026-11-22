@@ -64,6 +64,9 @@ final class AppModel: ObservableObject {
             settingsStore: settingsStore
         )
 
+    private lazy var appleIntelligenceSettingsModule =
+        AppleIntelligenceProviderSettingsModule()
+
     private lazy var providerRegistry = ProviderRegistry(
         registrations: [
             ProviderRegistry.Registration(
@@ -73,6 +76,11 @@ final class AppModel: ObservableObject {
                 transcriptionProvider:
                     appleTranscriptionProvider,
                 postProcessingProvider: nil
+            ),
+            ProviderRegistry.Registration(
+                settings: AnyProviderSettingsModule(appleIntelligenceSettingsModule),
+                transcriptionProvider: nil,
+                postProcessingProvider: AppleIntelligencePostProcessingProvider()
             ),
             ProviderRegistry.Registration(
                 settings: AnyProviderSettingsModule(

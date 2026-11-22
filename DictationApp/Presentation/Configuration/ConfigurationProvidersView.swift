@@ -79,13 +79,9 @@ private struct ConfigurationProviderDetailView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(descriptor.displayName)
                                 .font(.title3.weight(.semibold))
-                            Text(
-                                providerID == .appleOnDevice
-                                    ? "On-device availability, permission, and language assets."
-                                    : "Provider-specific connection and authentication settings."
-                            )
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            Text(providerDetail)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -107,9 +103,9 @@ private struct ConfigurationProviderDetailView: View {
                         ConfigurationSection(
                             "Configuration",
                             systemImage:
-                                providerID == .appleOnDevice
-                                ? "internaldrive"
-                                : "key"
+                                providerID == .openAI
+                                ? "key"
+                                : "internaldrive"
                         ) {
                             module.makeDetailView()
                         }
@@ -167,6 +163,17 @@ private struct ConfigurationProviderDetailView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 18)
             }
+        }
+    }
+
+    private var providerDetail: String {
+        switch providerID {
+        case .appleOnDevice:
+            "On-device availability, permission, and language assets."
+        case .appleIntelligence:
+            "Availability of the on-device transcript cleanup model."
+        case .openAI:
+            "Provider-specific connection and authentication settings."
         }
     }
 }

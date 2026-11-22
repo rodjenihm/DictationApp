@@ -30,6 +30,7 @@ struct PostProcessingConfiguration: Equatable, Sendable {
 struct PostProcessingRequest: Equatable, Sendable {
     let rawTranscript: String
     let model: ModelSelection
+    let language: LanguageSelection
     let fastModeEnabled: Bool
     let deadline: ContinuousClock.Instant?
     let diagnosticSessionID: UUID?
@@ -37,12 +38,14 @@ struct PostProcessingRequest: Equatable, Sendable {
     init(
         rawTranscript: String,
         model: ModelSelection,
+        language: LanguageSelection,
         fastModeEnabled: Bool,
         deadline: ContinuousClock.Instant? = nil,
         diagnosticSessionID: UUID? = nil
     ) {
         self.rawTranscript = rawTranscript
         self.model = model
+        self.language = language
         self.fastModeEnabled = fastModeEnabled
         self.deadline = deadline
         self.diagnosticSessionID = diagnosticSessionID

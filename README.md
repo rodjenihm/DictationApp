@@ -2,7 +2,8 @@
 
 DictationApp is a native macOS menu-bar app that records your speech, transcribes it through a configurable provider, and inserts the result at the current text cursor. It supports optional transcript cleanup for punctuation and formatting.
 
-OpenAI is currently the only implemented provider. The app uses your own OpenAI API key and does not require a separate DictationApp account or backend service.
+You can transcribe and clean up text on your Mac or use your own OpenAI API
+key for either stage. DictationApp has no separate account or backend service.
 
 This project is developed through a specification-driven, AI-assisted engineering workflow. Requirements, implementation slices, and verification evidence are documented in [`docs/`](docs/).
 
@@ -29,7 +30,13 @@ Provider setup is separate from choosing which provider and model powers each pr
 - **Transcription** selects a capable, configured provider, a provider-specific model, and the global language preference.
 - **Post-processing** can be disabled or configured independently with its own provider and model selection.
 
-OpenAI currently supports both transcription and post-processing. The provider registry is designed to add providers with different capabilities, processing locations, authentication mechanisms, and custom Settings interfaces without exposing unimplemented providers in the UI.
+- **Apple On-Device** transcribes speech on the Mac on macOS 26 or later
+  with a supported language asset.
+- **Apple Intelligence** tidies text on eligible Macs with macOS 26 or later.
+  It makes conservative wording changes. If local cleanup cannot edit a
+  transcript safely or within the time limit, the app inserts the raw text.
+- **OpenAI** supports both transcription and cleanup. When using GPT-6 Luna
+  for cleanup, Fast mode is available as an opt-in at a higher token rate.
 
 Settings changes are held together until **Save Changes** succeeds. Shortcut, provider credential, model, language, and post-processing changes are validated and committed as one operation, with best-effort rollback if a later step fails.
 
@@ -38,7 +45,7 @@ Settings changes are held together until **Save Changes** succeeds. Shortcut, pr
 - Apple Silicon Mac
 - macOS 15 or later
 - Xcode 26.6 or later
-- OpenAI API key
+- OpenAI API key when selecting OpenAI for either stage
 
 Microphone permission is required for recording. Accessibility permission is optional and enables automatic text insertion.
 
@@ -47,8 +54,13 @@ Microphone permission is required for recording. Accessibility permission is opt
 1. Open `DictationApp.xcodeproj` in Xcode.
 2. Select your Apple Development team under **Signing & Capabilities** if needed.
 3. Build and run the **DictationApp** scheme.
-4. Open **Settings → Providers → OpenAI** and enter your OpenAI API key.
-5. Choose the transcription and optional post-processing configuration in their respective Settings destinations.
+4. In **Settings → Transcription**, choose a provider. For Apple On-Device,
+   prepare the language asset in **Providers**. For OpenAI, add your API key
+   in **Providers → OpenAI**.
+5. In **Settings → Post-processing**, enable transcript cleanup if you want
+   punctuation, formatting, and filler edits. Choose **Apple Intelligence**
+   to clean up on the Mac, or **OpenAI** for cloud cleanup. Select
+   **Save Changes**.
 
 DictationApp runs in the menu bar and does not appear in the Dock.
 
@@ -64,4 +76,10 @@ After transcription, the app inserts the text at the currently focused cursor. I
 
 ## Privacy
 
-With the currently implemented OpenAI provider, completed audio is uploaded only after recording stops. When OpenAI transcript cleanup is enabled, the raw transcript is sent in a separate request. Provider credentials remain in macOS Keychain. Temporary recordings are deleted after successful transcription, and transcripts, audio, credentials, and clipboard contents are not written to application logs.
+OpenAI receives completed audio after Stop when selected for transcription.
+When selected for cleanup, it receives the raw transcript in a separate
+request. Apple On-Device transcription and Apple Intelligence cleanup
+process their inputs on the Mac. Provider credentials remain in macOS
+Keychain. The app deletes temporary recordings after successful
+transcription and excludes audio, transcripts, credentials, and clipboard
+contents from its logs.

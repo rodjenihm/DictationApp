@@ -9,6 +9,7 @@ enum ProviderID:
     Sendable
 {
     case appleOnDevice
+    case appleIntelligence
     case openAI
 
     var id: String { rawValue }
@@ -17,6 +18,8 @@ enum ProviderID:
         switch self {
         case .appleOnDevice:
             "Apple On-Device"
+        case .appleIntelligence:
+            "Apple Intelligence"
         case .openAI:
             "OpenAI"
         }

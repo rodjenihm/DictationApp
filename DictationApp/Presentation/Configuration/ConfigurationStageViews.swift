@@ -317,33 +317,11 @@ struct ConfigurationPostProcessingView: View {
             }
         }
 
-        ConfigurationSettingRow("Model") {
-            Picker(
-                "Post-processing model",
-                selection: $viewModel.postProcessingModelChoice
-            ) {
-                ForEach(
-                    viewModel.modelCatalog(
-                        for: viewModel.postProcessingProviderChoice,
-                        capability: .postProcessing
-                    )
-                ) { model in
-                    ConfigurationModelLabel(model: model)
-                        .tag(model.id)
-                }
-                if
-                    viewModel.supportsCustomModels(
-                        provider: viewModel.postProcessingProviderChoice,
-                        capability: .postProcessing
-                    )
-                {
-                    Divider()
-                    Text("Advanced: Custom model")
-                        .tag(ConfigurationViewModel.customModelChoice)
-                }
-            }
-            .labelsHidden()
-            .configurationPickerControl()
+        if viewModel.hasModelSelection(
+            provider: viewModel.postProcessingProviderChoice,
+            capability: .postProcessing
+        ) {
+            modelSelection
         }
 
         if
@@ -393,6 +371,35 @@ struct ConfigurationPostProcessingView: View {
                 provider: viewModel.postProcessingProviderChoice,
                 capability: .postProcessing
             )
+        }
+    }
+
+    private var modelSelection: some View {
+        ConfigurationSettingRow("Model") {
+            Picker(
+                "Post-processing model",
+                selection: $viewModel.postProcessingModelChoice
+            ) {
+                ForEach(
+                    viewModel.modelCatalog(
+                        for: viewModel.postProcessingProviderChoice,
+                        capability: .postProcessing
+                    )
+                ) { model in
+                    ConfigurationModelLabel(model: model)
+                        .tag(model.id)
+                }
+                if viewModel.supportsCustomModels(
+                    provider: viewModel.postProcessingProviderChoice,
+                    capability: .postProcessing
+                ) {
+                    Divider()
+                    Text("Advanced: Custom model")
+                        .tag(ConfigurationViewModel.customModelChoice)
+                }
+            }
+            .labelsHidden()
+            .configurationPickerControl()
         }
     }
 
