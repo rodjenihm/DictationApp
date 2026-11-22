@@ -1,17 +1,19 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "swift-concurrency": {
       "source": "avdlee/swift-concurrency-agent-skill",
       "sourceType": "github",
       "skillPath": "swift-concurrency/SKILL.md",
-      "computedHash": "5e1f6433159038c49135028eeeea3a7b9a0a6001c8a4cc8227e391caf35cd985"
+      "computedHash": "7977e699ad9eae2cccdb8de7520b5fb7701ed01a6bde52d47263bc30dec09482",
+      "commit": "3b1580d8398e0b5408b3bf0bada0e941a1cfc642"
     },
     "swiftui-expert-skill": {
       "source": "avdlee/swiftui-agent-skill",
       "sourceType": "github",
       "skillPath": "swiftui-expert-skill/SKILL.md",
-      "computedHash": "f903fb98352328f65ee7b433cfbc36fd11e08861d0ba81dc12cdc0feca1e59ea"
+      "computedHash": "187f7d0b9b9103f0935460c1b8060a77131c5ef24fa0d6757f5f5afdd23b7966",
+      "commit": "62bd760f005093d1e2e4de5db156e456a5f96400"
     }
   }
 }
