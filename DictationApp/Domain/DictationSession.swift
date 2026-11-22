@@ -28,6 +28,7 @@ struct SessionConfiguration: Equatable, Sendable {
     let postProcessingMode: PostProcessingMode
     let postProcessingProvider: ProviderID
     let postProcessingModel: ModelSelection
+    let postProcessingFastModeEnabled: Bool
     let recordingProfile: RecordingProfile
 
     init(
@@ -41,6 +42,7 @@ struct SessionConfiguration: Equatable, Sendable {
         postProcessingMode = configuration.postProcessingMode
         postProcessingProvider = configuration.postProcessingProvider
         postProcessingModel = configuration.postProcessingModel
+        postProcessingFastModeEnabled = configuration.postProcessingFastModeEnabled
         self.recordingProfile = recordingProfile
     }
 
@@ -55,6 +57,7 @@ struct SessionConfiguration: Equatable, Sendable {
             postProcessingMode: postProcessingMode,
             postProcessingProvider: postProcessingProvider,
             postProcessingModel: postProcessingModel,
+            postProcessingFastModeEnabled: postProcessingFastModeEnabled,
             recordingProfile: recordingProfile
         )
     }
@@ -67,6 +70,7 @@ struct SessionConfiguration: Equatable, Sendable {
         postProcessingMode: PostProcessingMode,
         postProcessingProvider: ProviderID,
         postProcessingModel: ModelSelection,
+        postProcessingFastModeEnabled: Bool,
         recordingProfile: RecordingProfile
     ) {
         self.audioInputPreference = audioInputPreference
@@ -76,6 +80,7 @@ struct SessionConfiguration: Equatable, Sendable {
         self.postProcessingMode = postProcessingMode
         self.postProcessingProvider = postProcessingProvider
         self.postProcessingModel = postProcessingModel
+        self.postProcessingFastModeEnabled = postProcessingFastModeEnabled
         self.recordingProfile = recordingProfile
     }
 }

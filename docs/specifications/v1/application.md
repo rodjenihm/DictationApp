@@ -194,7 +194,8 @@ When enabled, post-processing runs for every transcript. Do not add another mode
 
 OpenAI post-processing and its lightweight validation request use `none`
 reasoning effort for the curated models and `minimal` for other custom model
-IDs. GPT-6 Luna requests Fast mode, which has a higher per-token cost.
+IDs. GPT-6 Luna uses Standard unless the user enables Fast mode in
+Post-processing settings. Fast mode has a higher per-token cost.
 See the [OpenAI model migration specification](features/10-openai-model-migration.md).
 
 The initial version provides one built-in cleanup behavior. Users may enable or disable it and choose its provider and model, but cannot customize the cleanup instructions.

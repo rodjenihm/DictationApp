@@ -85,6 +85,7 @@ struct AppConfiguration: Codable, Equatable, Sendable {
         [ProviderID: LanguageSelection]
     var postProcessingMode: PostProcessingMode
     var postProcessing: StageConfiguration
+    private var postProcessingFastModeOptIn: Bool?
 
     static let `default` = AppConfiguration(
         audioInputPreference: .default,
@@ -191,6 +192,11 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var postProcessingModel: ModelSelection {
         get { postProcessing.activeModel }
         set { postProcessing.setModel(newValue, for: postProcessingProvider) }
+    }
+
+    var postProcessingFastModeEnabled: Bool {
+        get { postProcessingFastModeOptIn == true }
+        set { postProcessingFastModeOptIn = newValue ? true : nil }
     }
 
     var isStructurallyValid: Bool {

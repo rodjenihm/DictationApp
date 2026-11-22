@@ -26,13 +26,18 @@ struct OpenAICleanupPayload: Encodable {
         model: String,
         instructions: String,
         input: String,
-        maxOutputTokens: Int
+        maxOutputTokens: Int,
+        fastModeEnabled: Bool
     ) {
         self.model = model
         self.instructions = instructions
         self.input = input
         self.maxOutputTokens = maxOutputTokens
-        serviceTier = OpenAIModelCatalog.postProcessingServiceTier(for: model)
+        serviceTier = if OpenAIModelCatalog.supportsPostProcessingFastMode(for: model) {
+            fastModeEnabled ? .fast : .standard
+        } else {
+            nil
+        }
         reasoning = Reasoning(
             effort: OpenAIModelCatalog.postProcessingReasoningEffort(for: model)
         )

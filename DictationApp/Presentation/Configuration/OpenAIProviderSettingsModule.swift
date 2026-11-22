@@ -228,7 +228,8 @@ final class OpenAIProviderSettingsModule:
             do {
                 try await validator.validatePostProcessing(
                     credential: credential,
-                    model: configuration.postProcessingModel.identifier
+                    model: configuration.postProcessingModel.normalized.identifier,
+                    fastModeEnabled: configuration.postProcessingFastModeEnabled
                 )
             } catch is CancellationError {
                 throw CancellationError()

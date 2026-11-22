@@ -9,7 +9,8 @@ protocol OpenAIConfigurationValidating {
 
     func validatePostProcessing(
         credential: String,
-        model: String
+        model: String,
+        fastModeEnabled: Bool
     ) async throws
 }
 
@@ -125,14 +126,16 @@ final class OpenAIConfigurationValidator: OpenAIConfigurationValidating {
 
     func validatePostProcessing(
         credential: String,
-        model: String
+        model: String,
+        fastModeEnabled: Bool
     ) async throws {
         var payload = OpenAICleanupPayload(
             model: model,
             instructions:
                 "Return only the word OK. Do not add punctuation or explanation.",
             input: "Configuration validation",
-            maxOutputTokens: 128
+            maxOutputTokens: 128,
+            fastModeEnabled: fastModeEnabled
         )
 
         var request = try authorizedRequest(

@@ -113,5 +113,10 @@ matching changes to production and Settings requests.
 - Insertion records separate timing for clipboard preparation, Accessibility
   preparation and verification, outcome, and actual clipboard restoration.
   Stop-to-dispatch timing is correlated with the same in-memory session ID.
-- Live Stop-to-paste percentiles, cross-app paste, and cloud requests remain
-  pending manual verification.
+- November 22, 2026 · In a user-run Xcode session, the first cleanup hit its
+  deadline at 4.135 seconds. The next three completed in 3.402, 0.673, and
+  1.146 seconds. Stop-to-paste-dispatch times were 4.757, 3.875, 1.052, and
+  1.570 seconds respectively. The app logged confirmed delivery for all
+  four sessions. The logs identify the timeout but cannot explain the
+  first request's latency or establish the service tier OpenAI used.
+- Representative before-and-after percentiles remain pending.

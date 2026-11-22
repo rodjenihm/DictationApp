@@ -17,6 +17,14 @@ to GPT-6 Luna to prioritize latency for existing configurations. GPT-6.1
 Terra remains available for users who prefer a more capable cleanup model.
 Cleanup remains opt-in.
 
+When cleanup is enabled and the selected OpenAI model resolves to
+`gpt-6-luna`, Settings shows a **Use Fast mode** toggle with its pricing.
+The pricing note wraps beneath the toggle and has its own vertical space
+above the upload disclosure.
+The toggle defaults to off, including for saved configurations that
+predate the preference. Save applies the change to the next dictation.
+Keep the choice when the user disables cleanup or selects another model.
+
 OpenAI plans to retire both previous cleanup models on December 11, 2026,
 and both previous transcription models on February 26, 2027. When loading
 saved settings, map these curated selections to their replacements.
@@ -46,11 +54,13 @@ and the next Settings save persists the current selections.
   Settings validation and runtime cleanup, including when either model ID
   is typed as a custom selection. Custom model IDs outside the curated
   catalog continue to use the existing `minimal` effort.
-- Request `service_tier: fast` for GPT-6 Luna in runtime cleanup and Settings
-  validation. Label the Luna option with Fast mode pricing. OpenAI bills Luna
-  requests served in Fast mode at twice the applicable Standard token rate.
-  Accept successful responses served at Standard rates when OpenAI
-  downgrades the tier.
+- Request `service_tier: fast` for GPT-6 Luna when the user enables Fast mode.
+  Request `service_tier: default` for Luna when the toggle is off, even if
+  the OpenAI project defaults to Fast. Existing cleanup validation uses the
+  same choice. Saving only the toggle does not trigger a provider request.
+  OpenAI bills Luna requests served in Fast mode at twice the applicable
+  Standard token rate. Accept successful responses served at Standard rates
+  when OpenAI downgrades the tier.
 - If OpenAI explicitly rejects Fast mode for the project with HTTP 400 and
   identifies `service_tier` as the invalid parameter, try Standard. Apply
   the existing cleanup deadline and retry limit to the attempt. Preserve the

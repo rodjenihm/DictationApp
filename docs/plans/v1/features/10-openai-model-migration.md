@@ -12,8 +12,12 @@
 2. Share the transcription request body between runtime and Settings
    validation. Encode GPT-Transcribe's language hint using its array field.
 3. Use shared cleanup request fields for reasoning and processing tier in
-   runtime and Settings validation. Request Fast mode for GPT-6 Luna and
-   retry in Standard when OpenAI identifies the tier as disallowed.
+   runtime and Settings validation. Persist Luna's Fast opt-in alongside
+   cleanup settings, with Standard as the default for existing and new
+   configurations. Snapshot the saved choice at session start. Retry in
+   Standard when OpenAI identifies Fast as disallowed.
+   Give the price note and upload disclosure separate, vertically expanding
+   rows aligned with the model picker.
 4. Verify Debug and Release builds and check the working diff for
    whitespace errors. Review request fields against the published API
    contract without sending audio or transcripts.
@@ -29,4 +33,15 @@
   response against the same provider documentation. Both cleanup requests
   use the shared payload. Runtime fallback consumes an existing retry
   attempt and respects the cleanup deadline.
-- Live provider calls and transcript latency were not measured.
+- A user-run session on the preceding build recorded three successful
+  cleanup requests and one cleanup deadline fallback. The app's logs did
+  not identify the service tier OpenAI used.
+- Unsigned Debug and Release builds passed for the opt-in follow-up.
+  A local check with the production encoder confirmed that saved
+  configurations without the preference decoded as Standard.
+  Opt-in survived encoding, decoding, and the session snapshot and repair
+  paths. Luna encoded `default` with the preference off and `fast` with it
+  on. Terra omitted the tier. The follow-up made no live API requests.
+- The spacing follow-up passed unsigned Debug and Release builds. Isolated
+  SwiftUI renders at 525 and 350 points and in the accessibility layout
+  showed separate rows and full wrapping for the price and upload text.

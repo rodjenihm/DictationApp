@@ -34,7 +34,7 @@ enum OpenAIModelCatalog {
         ProviderModel(
             id: defaultPostProcessingModelID,
             displayName: "GPT-6 Luna",
-            detail: "Fast (2× cost)"
+            detail: nil
         ),
         ProviderModel(
             id: terraModelID,
@@ -158,10 +158,8 @@ enum OpenAIModelCatalog {
         }
     }
 
-    static func postProcessingServiceTier(
-        for model: String
-    ) -> OpenAICleanupPayload.ServiceTier? {
-        model == lunaModelID ? .fast : nil
+    static func supportsPostProcessingFastMode(for model: String) -> Bool {
+        model == lunaModelID
     }
 
     static func migratingCuratedModels(

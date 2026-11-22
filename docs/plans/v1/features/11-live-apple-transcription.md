@@ -40,5 +40,7 @@
 - The command-line Speech probe found the on-device transcriber available.
   The locale assets reported `.supported` from the probe process and failed
   the provider's installed-asset requirement. No asset reservations or
-  installations changed. End-to-end Apple transcription, delivery, transcript
-  quality, and comparative latency remain unverified.
+  installations changed.
+- A subsequent user-run Xcode session logged four live Apple transcription
+  results, each followed by confirmed delivery. Transcript quality and
+  comparative latency remain unverified.

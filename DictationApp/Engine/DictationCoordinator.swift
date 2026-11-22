@@ -969,6 +969,7 @@ final class DictationCoordinator: ObservableObject {
         let request = PostProcessingRequest(
             rawTranscript: rawTranscript,
             model: configuration.postProcessingModel,
+            fastModeEnabled: configuration.postProcessingFastModeEnabled,
             deadline: deadline,
             diagnosticSessionID: token.id
         )

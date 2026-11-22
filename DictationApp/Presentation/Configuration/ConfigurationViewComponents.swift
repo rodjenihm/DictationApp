@@ -166,21 +166,14 @@ struct ConfigurationFormSupplementary<Content: View>: View {
     }
 
     var body: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            content
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            HStack(
-                alignment: .firstTextBaseline,
-                spacing: ConfigurationFormMetrics.columnSpacing
-            ) {
-                Color.clear
-                    .frame(width: ConfigurationFormMetrics.labelWidth)
-                    .accessibilityHidden(true)
-                content
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+        let leadingInset = dynamicTypeSize.isAccessibilitySize
+            ? 0
+            : ConfigurationFormMetrics.labelWidth + ConfigurationFormMetrics.columnSpacing
+
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, leadingInset)
     }
 }
 

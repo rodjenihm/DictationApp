@@ -100,7 +100,8 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
             model: model,
             instructions: Self.cleanupInstructions,
             input: serializedTranscript,
-            maxOutputTokens: maximumOutputTokens
+            maxOutputTokens: maximumOutputTokens,
+            fastModeEnabled: request.fastModeEnabled
         )
         var urlRequest = try makeRequest(
             credential: credential,

@@ -139,6 +139,7 @@ final class ConfigurationViewModel {
         AppConfiguration.default.postProcessingProvider
     var postProcessingModelChoice = ""
     var postProcessingCustomModel = ""
+    var postProcessingFastModeEnabled = false
     var audioInputPreference = AudioInputPreference.default
     var soundCuesEnabled = true
     private(set) var globalShortcut =
@@ -554,6 +555,8 @@ final class ConfigurationViewModel {
                     != savedConfiguration.postProcessingMode
                 || draft.postProcessing
                     != savedConfiguration.postProcessing
+                || draft.postProcessingFastModeEnabled
+                    != savedConfiguration.postProcessingFastModeEnabled
         case .providers:
             _ = providerSettingsRevision
             return providerRegistry.settingsModules.contains(
@@ -1224,6 +1227,8 @@ final class ConfigurationViewModel {
                 : .curated(resolvedPostProcessingModel),
             for: postProcessingProviderChoice
         )
+        configuration.postProcessingFastModeEnabled =
+            postProcessingFastModeEnabled
         configuration.audioInputPreference =
             audioInputDeviceService.refreshingPresentationMetadata(
                 for: audioInputPreference
@@ -1268,6 +1273,13 @@ final class ConfigurationViewModel {
         return postProcessingModelChoice
     }
 
+    var supportsPostProcessingFastMode: Bool {
+        postProcessingProviderChoice == .openAI
+            && OpenAIModelCatalog.supportsPostProcessingFastMode(
+                for: resolvedPostProcessingModel
+            )
+    }
+
     private func apply(_ configuration: AppConfiguration) {
         audioInputPreference = configuration.audioInputPreference
         transcriptionModelsByProvider =
@@ -1285,6 +1297,8 @@ final class ConfigurationViewModel {
         postProcessingProviderChoice =
             configuration.postProcessingProvider
         applyPostProcessingModel(configuration.postProcessingModel)
+        postProcessingFastModeEnabled =
+            configuration.postProcessingFastModeEnabled
     }
 
     private func applyTranscriptionModel(_ model: ModelSelection) {

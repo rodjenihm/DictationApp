@@ -373,6 +373,20 @@ struct ConfigurationPostProcessingView: View {
             }
         }
 
+        if viewModel.supportsPostProcessingFastMode {
+            ConfigurationFormSupplementary {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle(
+                        "Use Fast mode",
+                        isOn: $viewModel.postProcessingFastModeEnabled
+                    )
+                    Text("Fast mode costs twice the Standard token rate.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+
         ConfigurationFormSupplementary {
             ConfigurationStageDisclosure(
                 viewModel: viewModel,
