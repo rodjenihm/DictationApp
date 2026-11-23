@@ -1,6 +1,7 @@
 import Foundation
 
 enum PostProcessingOutputPolicyError: String, Error, Sendable {
+    case wordingChanged = "wording_changed"
     case empty
     case excessiveExpansion = "excessive_expansion"
     case codeFence = "code_fence"

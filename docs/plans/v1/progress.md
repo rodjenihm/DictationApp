@@ -503,3 +503,4 @@ build evidence and remaining runtime verification.
 - [OpenAI cleanup observability](features/12-openai-cleanup-observability.md)
 - [On-device transcript cleanup](features/13-on-device-cleanup.md)
 - [Dictation interface polish](features/14-interface-polish.md)
+- [Cleanup fallback feedback](features/15-cleanup-fallback-feedback.md)

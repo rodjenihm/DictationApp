@@ -370,8 +370,8 @@ struct OverlayView: View {
             "Inserting…"
         case .inserted:
             "Transcript inserted"
-        case .rawTranscriptFallback:
-            "Cleanup unavailable · Raw text inserted"
+        case .rawTranscriptFallback(let message):
+            message
         case .noSpeech:
             "No speech detected"
         case .tooShort:

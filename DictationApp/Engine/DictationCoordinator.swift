@@ -913,7 +913,7 @@ final class DictationCoordinator: ObservableObject {
         guard configuration.postProcessingMode == .enabled else {
             try await insertTranscript(
                 rawTranscript,
-                rawFallbackMessage: nil,
+                cleanupFallback: nil,
                 token: token
             )
             return
@@ -932,8 +932,7 @@ final class DictationCoordinator: ObservableObject {
             )
             try await insertTranscript(
                 rawTranscript,
-                rawFallbackMessage:
-                    "Cleanup needs attention.",
+                cleanupFallback: .couldNotFinish(detail: "Cleanup needs attention."),
                 token: token
             )
             return
@@ -953,8 +952,7 @@ final class DictationCoordinator: ObservableObject {
             )
             try await insertTranscript(
                 rawTranscript,
-                rawFallbackMessage:
-                    "Cleanup was unavailable.",
+                cleanupFallback: .couldNotFinish(),
                 token: token
             )
             return
@@ -980,14 +978,14 @@ final class DictationCoordinator: ObservableObject {
             diagnosticSessionID: token.id
         )
         let finalText: String
-        let fallbackMessage: String?
+        let cleanupFallback: CleanupFallback?
         do {
             finalText = try await cleanTranscript(
                 using: postProcessingProvider,
                 request: request,
                 deadline: deadline
             )
-            fallbackMessage = nil
+            cleanupFallback = nil
             AppLog.recordLatency(
                 "cleanup_succeeded",
                 since: cleanupStartedAt,
@@ -1018,34 +1016,41 @@ final class DictationCoordinator: ObservableObject {
 
             finalText = rawTranscript
             if failure == .deadlineExceeded {
-                fallbackMessage = "Cleanup took too long."
+                cleanupFallback = .timedOut
             } else if configuration.postProcessingProvider == .appleIntelligence {
-                fallbackMessage = failure.errorDescription
+                cleanupFallback = .couldNotFinish(detail: failure.errorDescription)
             } else {
-                fallbackMessage = "Cleanup was unavailable."
+                cleanupFallback = .couldNotFinish()
             }
-        } catch {
+        } catch let rejection as PostProcessingOutputPolicyError {
             try requireCurrent(token)
-            let rejection = error as? PostProcessingOutputPolicyError
             AppLog.providers.error(
-                "Post-processing fallback reason \(rejection?.rawValue ?? "unclassified", privacy: .public)"
+                "Post-processing fallback reason \(rejection.rawValue, privacy: .public)"
             )
             AppLog.recordLatency(
-                rejection == nil
-                    ? "cleanup_fallback_unclassified"
-                    : "cleanup_fallback_invalid_output",
+                "cleanup_fallback_invalid_output",
                 since: cleanupStartedAt,
                 sessionID: token.id
             )
             finalText = rawTranscript
-            fallbackMessage = rejection == nil
-                ? "Cleanup was unavailable."
-                : "Cleanup returned an unusable edit."
+            cleanupFallback = .editRejected(rejection)
+        } catch {
+            try requireCurrent(token)
+            AppLog.providers.error(
+                "Post-processing fallback reason unclassified"
+            )
+            AppLog.recordLatency(
+                "cleanup_fallback_unclassified",
+                since: cleanupStartedAt,
+                sessionID: token.id
+            )
+            finalText = rawTranscript
+            cleanupFallback = .couldNotFinish()
         }
 
         try await insertTranscript(
             finalText,
-            rawFallbackMessage: fallbackMessage,
+            cleanupFallback: cleanupFallback,
             token: token
         )
     }
@@ -1101,7 +1106,7 @@ final class DictationCoordinator: ObservableObject {
 
     private func insertTranscript(
         _ transcript: String,
-        rawFallbackMessage: String?,
+        cleanupFallback: CleanupFallback?,
         token: SessionToken
     ) async throws {
         try requireCurrent(token)
@@ -1160,12 +1165,9 @@ final class DictationCoordinator: ObservableObject {
         case .confirmed:
             _ = transaction.restoreIfOwned()
 
-            if let rawFallbackMessage {
+            if let cleanupFallback {
                 guard transition(
-                    to: .rawTranscriptFallback(
-                        rawFallbackMessage
-                            + " The raw transcript was inserted."
-                    ),
+                    to: .rawTranscriptFallback(cleanupFallback),
                     token: token
                 ) else {
                     throw CancellationError()
@@ -1185,7 +1187,7 @@ final class DictationCoordinator: ObservableObject {
         case .unverified:
             let message = deliveryFallbackMessage(
                 outcome: .unverified,
-                rawFallbackMessage: rawFallbackMessage,
+                cleanupFallback: cleanupFallback,
                 transcriptRemainsOnClipboard:
                     transaction.isStillOwned
             )
@@ -1204,7 +1206,7 @@ final class DictationCoordinator: ObservableObject {
         case .failed:
             let message = deliveryFallbackMessage(
                 outcome: .failed,
-                rawFallbackMessage: rawFallbackMessage,
+                cleanupFallback: cleanupFallback,
                 transcriptRemainsOnClipboard:
                     transaction.isStillOwned
             )
@@ -1585,10 +1587,11 @@ final class DictationCoordinator: ObservableObject {
 
     private func deliveryFallbackMessage(
         outcome: TextInsertionOutcome,
-        rawFallbackMessage: String?,
+        cleanupFallback: CleanupFallback?,
         transcriptRemainsOnClipboard: Bool
     ) -> String {
-        let cleanupPrefix = rawFallbackMessage.map { $0 + " " } ?? ""
+        let cleanupPrefix = cleanupFallback.map { $0.message + " " } ?? ""
+        let textLabel = cleanupFallback == nil ? "transcript" : "original text"
 
         guard transcriptRemainsOnClipboard else {
             return cleanupPrefix
@@ -1598,10 +1601,10 @@ final class DictationCoordinator: ObservableObject {
         switch outcome {
         case .unverified:
             return cleanupPrefix
-                + "Insertion could not be verified. The transcript remains on the clipboard."
+                + "Insertion could not be verified. The \(textLabel) remains on the clipboard."
         case .failed:
             return cleanupPrefix
-                + "Automatic insertion was unavailable. The transcript is ready to paste."
+                + "Automatic insertion was unavailable. The \(textLabel) is ready to paste."
         case .confirmed:
             return cleanupPrefix
         }

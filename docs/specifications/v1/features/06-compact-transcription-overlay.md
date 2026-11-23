@@ -154,10 +154,10 @@ Routine processing pills show only their primary message and Cancel control.
 They do not show provider names or upload/cleanup explanations. The menu-bar UI
 continues to expose the fuller provider-specific status.
 
-The raw-transcript fallback remains visible for the existing 2.5-second period
-because it communicates degraded delivery. It uses a compact warning with
-concise copy such as `Cleanup unavailable · Raw text inserted`; detailed
-fallback information remains available in the menu-bar status.
+The raw-transcript fallback remains visible for the existing 2.5-second
+period. It uses the classified compact message in the
+[cleanup fallback feedback specification](15-cleanup-fallback-feedback.md).
+Detailed fallback information remains available in the menu-bar status.
 
 ## Confirmed insertion
 

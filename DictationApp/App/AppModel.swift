@@ -533,15 +533,16 @@ final class AppModel: ObservableObject {
             overlayWindowController.present(
                 .clipboardFallback(message: message)
             )
-        case .rawTranscriptFallback(let message):
+        case .rawTranscriptFallback(let fallback):
             shortcutService.unregisterSessionCancellationShortcut()
-            statusText = message
+            statusText = "\(fallback.message) Original text pasted."
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = true
             canCancel = false
             overlayWindowController.present(
-                .rawTranscriptFallback(message: message)
+                .rawTranscriptFallback(message: "\(fallback.title) · Original text pasted")
             )
+            announceAccessibility(statusText)
         case .noSpeech:
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = "No speech detected"

@@ -102,9 +102,7 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
             rawTranscript: request.rawTranscript
         )
         guard preservesWording(raw: request.rawTranscript, edited: edited) else {
-            throw ProviderOperationFailure.operation(
-                message: "On-device cleanup would change the spoken wording."
-            )
+            throw PostProcessingOutputPolicyError.wordingChanged
         }
         return edited
     }
