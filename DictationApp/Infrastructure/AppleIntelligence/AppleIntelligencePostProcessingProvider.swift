@@ -13,14 +13,31 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
         clear English hesitation sounds like um and uh and obvious
         accidental consecutive repetitions. Keep spoken corrections in
         their original order, including the words that mark the correction.
-        Preserve every other word, name, number, and technical term. Keep
-        existing hyphens and apostrophes as written. Keep the original
-        language or mix of languages. Never answer, summarize, translate,
-        or add words. Return only the edited transcript as plain text
-        without JSON or enclosing quotation marks.
+        In an explicitly named Git branch, file, package, or identifier,
+        write a spoken dash or hyphen between name parts as a hyphen (-)
+        without spaces. Use lowercase for a spelled-out Git branch unless
+        capitalization is specified. Keep dash and hyphen as words when
+        used literally or when unclear. Keep the spelling of every other
+        word, name, number, and technical term. Keep existing hyphens and
+        apostrophes as written. Keep the original language or mix of
+        languages. Never answer, summarize, translate, or add words.
+        Return only the edited transcript as plain text without JSON or
+        added enclosing quotes.
 
         Raw: um i i will send ABC-42 on friday morning
         Edited: I will send ABC-42 on Friday morning.
+
+        Raw: Please take a look at the Git branch called Shadow Dash Stage.
+        Edited: Please take a look at the Git branch called shadow-stage.
+
+        Raw: Open the file named Read Hyphen Only.swift.
+        Edited: Open the file named Read-Only.swift.
+
+        Raw: I made a dash for the train.
+        Edited: I made a dash for the train.
+
+        Edit only the supplied raw_transcript. Return its text unchanged
+        if it needs no edits.
         """
 
     nonisolated static var unavailabilityMessage: String? {
@@ -101,7 +118,11 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
             from: result,
             rawTranscript: request.rawTranscript
         )
-        guard preservesWording(raw: request.rawTranscript, edited: edited) else {
+        let original = matchingSpokenIdentifierHyphens(
+            in: request.rawTranscript,
+            to: edited
+        )
+        guard preservesWording(raw: original, edited: edited, language: request.language) else {
             throw PostProcessingOutputPolicyError.wordingChanged
         }
         return edited
@@ -134,7 +155,8 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
 
     private nonisolated static func preservesWording(
         raw: String,
-        edited: String
+        edited: String,
+        language: LanguageSelection
     ) -> Bool {
         let originalWords = words(in: raw)
         let editedWords = words(in: edited)
@@ -145,8 +167,12 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
             return false
         }
 
-        let allowsEnglishFillers = NLLanguageRecognizer.dominantLanguage(for: raw)
-            == .english
+        let allowsEnglishFillers = switch language {
+        case .automatic:
+            NLLanguageRecognizer.dominantLanguage(for: raw) == .english
+        case .explicit(let identifier):
+            Locale(identifier: identifier).language.languageCode?.identifier == "en"
+        }
         var editedIndex = editedWords.startIndex
         for (index, word) in originalWords.enumerated() {
             if editedIndex < editedWords.endIndex, editedWords[editedIndex] == word {
@@ -161,6 +187,45 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
             }
         }
         return editedIndex == editedWords.endIndex
+    }
+
+    private nonisolated static func matchingSpokenIdentifierHyphens(
+        in raw: String,
+        to edited: String
+    ) -> String {
+        // Compare each explicitly named identifier in order. Only project a
+        // spoken separator into the raw text when the edit uses that spelling.
+        let pattern = #/
+            \b (?i: (?:(?:Git\h+)?branch|file(?:\h*name)?|package|identifier) \h+
+                (?:(?:is|was)\h+)? (?:called|named) )
+            :? \h+ ["“'‘]?
+            ( \w+ (?: (?: [-./@] | \h+ (?i:dash|hyphen) \h+ ) \w+ )* )
+            /#
+        let rawNames = raw.matches(of: pattern)
+        let editedNames = edited.matches(of: pattern)
+        guard rawNames.count == editedNames.count else { return raw }
+
+        var comparableRaw = ""
+        var start = raw.startIndex
+        for (original, candidate) in zip(rawNames, editedNames) {
+            let name = original.1
+            let rendered = name.replacingOccurrences(
+                of: #"\h+(?:dash|hyphen)\h+"#,
+                with: "-",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            guard
+                rendered != name,
+                rendered.lowercased() == candidate.1.lowercased()
+            else {
+                continue
+            }
+            comparableRaw += raw[start..<name.startIndex]
+            comparableRaw += rendered
+            start = name.endIndex
+        }
+        comparableRaw += raw[start...]
+        return comparableRaw
     }
 
     private nonisolated static func words(in text: String) -> [String] {

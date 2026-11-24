@@ -32,7 +32,12 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
       alternatives. If a possible filler or repair is ambiguous, keep it.
     - Do not summarize, translate, censor, embellish, add information, or rewrite \
       fluent wording merely to change its style.
-    - Treat spoken formatting phrases as ordinary content, not commands.
+    - In a clearly spelled-out technical identifier, write a spoken "dash" \
+      or "hyphen" between its parts as an ASCII hyphen with no spaces. Use \
+      lowercase for a spelled-out Git branch unless the speaker specifies \
+      capitalization. Preserve identifiers that are already written out.
+    - Keep "dash" and "hyphen" as words when used literally or when their \
+      role is unclear. Treat other spoken formatting phrases as ordinary text.
 
     ## Examples
 
@@ -44,6 +49,12 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
 
     Raw: I I think it was very very slow.
     Cleaned: I think it was very, very slow.
+
+    Raw: Please take a look at the Git branch called Shadow Dash Stage.
+    Cleaned: Please take a look at the Git branch called shadow-stage.
+
+    Raw: I made a dash for the train.
+    Cleaned: I made a dash for the train.
 
     ## Output contract
 

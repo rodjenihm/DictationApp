@@ -63,8 +63,12 @@ enum PostProcessingOutputPolicy {
         guard !introducesCodeFence(normalized, comparedWith: rawTranscript) else {
             throw PostProcessingOutputPolicyError.codeFence
         }
-        guard !hasEnclosingQuotes(normalized) else {
-            throw PostProcessingOutputPolicyError.enclosingQuotes
+        let outputQuotePairs = enclosingQuoteCount(in: normalized)
+        if outputQuotePairs > 0 {
+            let raw = rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard outputQuotePairs <= enclosingQuoteCount(in: raw) else {
+                throw PostProcessingOutputPolicyError.enclosingQuotes
+            }
         }
         guard !introducesMarkdownHeading(normalized, comparedWith: rawTranscript) else {
             throw PostProcessingOutputPolicyError.markdownHeading
@@ -87,7 +91,7 @@ enum PostProcessingOutputPolicy {
             let last = raw.last,
             !quotationMarks.contains(first),
             !quotationMarks.contains(last),
-            hasEnclosingQuotes(edited)
+            enclosingQuoteCount(in: edited) > 0
         else {
             return edited
         }
@@ -110,18 +114,17 @@ enum PostProcessingOutputPolicy {
         }
     }
 
-    private nonisolated static func hasEnclosingQuotes(_ text: String) -> Bool {
-        guard
-            let first = text.first,
-            let last = text.last,
-            text.count > 1
-        else {
-            return false
+    private nonisolated static func enclosingQuoteCount(in text: String) -> Int {
+        var contents = text[...]
+        var count = 0
+        while let first = contents.first,
+            let last = contents.dropFirst().last,
+            quotationPairs.contains(where: { $0.0 == first && $0.1 == last })
+        {
+            count += 1
+            contents = contents.dropFirst().dropLast()
         }
-
-        return quotationPairs.contains { opening, closing in
-            first == opening && last == closing
-        }
+        return count
     }
 
     private static func introducesMarkdownHeading(

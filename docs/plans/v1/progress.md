@@ -294,6 +294,24 @@ Verification limitation:
   nondeterministic and requires representative dictation checks with both
   curated models.
 
+2026-11-24 spoken identifier follow-up:
+
+- Updated the OpenAI and Apple Intelligence instructions to distinguish a
+  spoken separator in a technical identifier from a literal “dash” or
+  “hyphen.” Apple Intelligence checks that the rendered identifier matches the
+  named parts before applying its existing wording and literal comparisons.
+- Shared validation accepts original enclosing quotation marks and rejects
+  added enclosing quote pairs. Apple Intelligence uses the selected language
+  for English filler validation when the language is explicit.
+- Live Apple Intelligence replays produced `shadow-stage` and `Read-Only.swift`,
+  retained “dash” as an ordinary word, and accepted an originally quoted
+  transcript. Separate checks confirmed rejection of added quote wrappers,
+  preambles, and code fences. The wording guard also rejected unrelated text
+  returned for short input during tuning.
+- Signed arm64 Debug and Release builds passed with Xcode 27.2. The replay
+  exercised cleanup and validation directly. The isolated process could not
+  access the stored OpenAI key for a live request.
+
 ### Slice 9 — Clipboard preservation and Accessibility insertion
 
 Implemented:

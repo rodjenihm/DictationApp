@@ -29,10 +29,15 @@ technical terms, and the original language.
   in the transcript as text. Use no model tools.
 - Keep local edits conservative. Allow punctuation, capitalization,
   paragraph breaks, adjacent word repetitions, and clear English fillers.
-  Preserve spoken corrections as written. Reject inserted or substituted
-  words and other word removals, independently of the model instructions.
-  Preserve numeric literals and punctuation within technical terms,
-  including identifiers and signed numbers.
+  Preserve spoken corrections as written. When the speaker explicitly names
+  a Git branch, file, package, or identifier, allow a spoken “dash” or “hyphen”
+  between its parts to become an ASCII hyphen without spaces. Use lowercase
+  by default for a spelled-out Git branch. Keep literal and ambiguous uses
+  of “dash” and “hyphen” as words.
+- Check wording independently of the model instructions. Reject inserted
+  or substituted words and removals outside the allowed edits. Preserve
+  numeric literals and punctuation within written technical terms, including
+  identifiers and signed numbers.
 - Remove one matching pair of presentation quotes around the entire model
   response when the raw transcript has no quotes at its boundaries. Decode
   a complete JSON string before taking its contents so embedded quotes and
@@ -40,8 +45,10 @@ technical terms, and the original language.
   checks to the unwrapped text. Preserve quotations that are part of the
   original dictation.
 - For an explicit transcription language, check model locale support
-  before generation. For Automatic, let the system model handle the
-  language of the input. Preserve mixed language text.
+  before generation and use the selected language to determine whether to
+  allow English filler removal. For Automatic, let the system model handle
+  the input language and use the transcript's detected language for the
+  filler check. Preserve mixed language text.
 - Apply the shared cleanup deadline and output checks. If the system model
   is unavailable, the language or transcript length is unsupported,
   generation fails, output is invalid, or the deadline expires, deliver
