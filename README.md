@@ -68,18 +68,18 @@ DictationApp runs in the menu bar and does not appear in the Dock.
 
 Use either global shortcut to dictate.
 
-- Press **Option–Space** to start. Press it again to stop and transcribe.
-- Hold **Control–Shift–Space** for a short dictation. Release **Space** to stop and transcribe.
+- Press **Fn–Space** to start. Press it again to stop and transcribe.
+- Hold **Fn** to dictate. Release **Fn** to stop and transcribe.
 - Press **Escape** to cancel an active session.
 
 Change either shortcut or disable hold to dictate in **Settings → General**,
 then select **Save Changes**.
 
-To use the Fn key, set **Toggle dictation** to **Fn–Space** and **Hold to
-dictate** to **Fn**. Release **Fn** to stop a hold recording. Global Fn
-shortcuts require Accessibility access. If macOS also runs an action when
-you press Fn alone, set **Press fn key to** to **Do Nothing** in macOS
-Keyboard settings.
+Enable Accessibility in **Settings → General → Permissions** to use the
+default shortcuts. You can also start dictation from the menu bar or assign
+a shortcut that uses Command, Option, Control, or Shift. If macOS also runs
+an action when you press Fn alone, set **Press fn key to** to **Do Nothing**
+in macOS Keyboard settings.
 
 After transcription, the app inserts the text at the currently focused cursor. If insertion fails or cannot be confirmed, the transcript remains on the clipboard for manual paste.
 

@@ -692,9 +692,9 @@ final class ConfigurationViewModel {
 
     func refreshSystemState() {
         audioInputDeviceService.refresh()
-        refreshShortcutAvailability()
         microphoneStatus = permissionService.microphoneStatus()
         accessibilityStatus = permissionService.accessibilityStatus()
+        refreshShortcutsAfterPermissionChange()
         speechRecognitionStatus =
             permissionService.speechRecognitionStatus()
         providerRegistry.settingsModules.forEach {
@@ -716,6 +716,7 @@ final class ConfigurationViewModel {
         }
         accessibilityStatus =
             permissionService.requestAccessibilityAccess()
+        refreshShortcutsAfterPermissionChange()
     }
 
     func enableSpeechRecognition() async {
@@ -755,10 +756,6 @@ final class ConfigurationViewModel {
         globalShortcut = candidate
         retriesToggleShortcutRegistration = candidate == savedShortcut
             && shortcutService.activeShortcut != candidate
-    }
-
-    func resetGlobalShortcut() {
-        updateGlobalShortcut(.defaultShortcut)
     }
 
     func updateHoldShortcut(_ candidate: GlobalShortcut?) {
@@ -856,6 +853,17 @@ final class ConfigurationViewModel {
                 "The saved hold shortcut (\(savedHoldShortcut.displayName)) is unavailable. \(guidance)"
         } else {
             holdShortcutAvailabilityMessage = nil
+        }
+    }
+
+    private func refreshShortcutsAfterPermissionChange() {
+        let didRegister = shortcutService.retryPermissionBlockedShortcuts(
+            toggle: savedShortcut,
+            hold: savedHoldShortcut
+        )
+        refreshShortcutAvailability()
+        if didRegister {
+            onConfigurationChanged?()
         }
     }
 

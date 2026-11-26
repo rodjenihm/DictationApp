@@ -151,10 +151,10 @@ Discard Changes.
 
 ### Global Shortcut
 
-Keep the existing shortcut recorder and reset-to-default action, but change the
-shortcut to participate in the window-level draft:
+Shortcut controls participate in the window-level draft. See the
+[hold-to-dictate specification](16-hold-to-dictate.md) for the default bindings.
 
-- Recording or resetting a shortcut changes only the draft.
+- Recording a shortcut changes only the draft.
 - Reject malformed or macOS-reserved combinations locally.
 - Keep the currently registered shortcut active until Save succeeds.
 - During Save, attempt registration before committing the new shortcut.

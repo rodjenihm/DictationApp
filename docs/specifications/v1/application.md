@@ -93,10 +93,10 @@ Insertion boundary behavior:
 
 ## Shortcut behavior
 
-- Use Option–Space as the default toggle shortcut. Press once to start,
+- Use Fn–Space as the default toggle shortcut. Press once to start,
   then press again to stop and transcribe.
-- Use Control–Shift–Space as the default hold shortcut. Press the chord to
-  start, then release Space to stop and transcribe.
+- Use Fn as the default hold shortcut. Hold it to start, then release it to
+  stop and transcribe.
 - Ignore additional shortcut presses while transcribing, post-processing, or inserting.
 - Provide an equivalent Stop action through the menu-bar UI while recording.
 - Keep Cancel available through Escape, the overlay, and the menu-bar UI throughout an active session.
@@ -361,7 +361,8 @@ Permission behavior:
 - Show current permission status in onboarding and Settings.
 - Derive status from the corresponding macOS authorization API; do not persist a separate granted flag.
 - Recheck status before using the protected feature and when returning from System Settings.
-- If the user skips Accessibility, keep dictation available in clipboard-only mode with standard shortcuts.
+- If the user skips Accessibility, keep dictation available in clipboard-only mode from the menu bar or with standard shortcuts.
+- Activate permission-blocked Fn shortcuts when the user grants access and returns to DictationApp.
 - If Accessibility is unavailable when insertion is attempted, leave the transcript on the clipboard and show the manual-paste fallback.
 - If the user skips Microphone setup, request it just in time on the first attempt to start recording.
 - If a permission was denied, explain the affected capability and provide an Open System Settings action rather than repeatedly triggering prompts.

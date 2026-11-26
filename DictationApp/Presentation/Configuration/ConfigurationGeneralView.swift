@@ -225,14 +225,6 @@ struct ConfigurationGeneralView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if viewModel.globalShortcut != GlobalShortcut.defaultShortcut {
-                ConfigurationFormSupplementary {
-                    Button("Reset to Option–Space") {
-                        viewModel.resetGlobalShortcut()
-                    }
-                }
-            }
-
             if let message = viewModel.toggleShortcutAvailabilityMessage {
                 ConfigurationFormSupplementary {
                     ConfigurationIssueLabel(message: message)

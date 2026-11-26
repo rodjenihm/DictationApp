@@ -308,7 +308,7 @@ for the selected device, including visually truncated names.
 #### Global Shortcut
 
 Keep the AppKit-backed shortcut recorder as the primary control. Align the
-reset action and saved-shortcut explanation with the same section rhythm.
+saved-shortcut explanation with the same section rhythm.
 Preserve local validation, focus behavior, Escape cancellation, and the fact
 that the saved shortcut remains active until Save succeeds.
 

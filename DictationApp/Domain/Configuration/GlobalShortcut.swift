@@ -22,15 +22,8 @@ struct GlobalShortcut: Codable, Equatable {
         modifiers: functionModifier
     )
 
-    static let defaultShortcut = GlobalShortcut(
-        keyCode: UInt32(kVK_Space),
-        modifiers: UInt32(optionKey)
-    )
-
-    static let defaultHoldShortcut = GlobalShortcut(
-        keyCode: UInt32(kVK_Space),
-        modifiers: UInt32(controlKey | shiftKey)
-    )
+    static let defaultShortcut = functionSpace
+    static let defaultHoldShortcut = standaloneFunctionKey
 
     init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode

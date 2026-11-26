@@ -4,15 +4,15 @@ Provide two configurable global shortcuts in **Settings → General**.
 
 | Action | Default | Behavior |
 | --- | --- | --- |
-| Toggle dictation | Option–Space | Press to start. Press again to stop and transcribe. |
-| Hold to dictate | Control–Shift–Space | Press the chord to start. Release the trigger key to stop and transcribe. |
+| Toggle dictation | Fn–Space | Press to start. Press again to stop and transcribe. |
+| Hold to dictate | Fn | Hold to start. Release Fn to stop and transcribe. |
 
 Each shortcut accepts a non-modifier key with at least one of Command,
 Option, Control, or Shift. Either shortcut also accepts Fn–Space, and hold
 to dictate accepts Fn alone. Assign distinct bindings. Hold to dictate can
 be disabled.
-Keep the existing saved toggle chord on upgrade. Use the hold default when
-no hold preference exists, unless the toggle already uses that chord.
+Use the defaults when no shortcut preference exists. Preserve saved
+shortcuts and the disabled hold preference on upgrade.
 
 A hold starts a session only when the app would accept a new toggle
 session. Releasing the hold stops only the session started by that press.
@@ -34,7 +34,9 @@ report known macOS or application conflicts. A failed registration leaves
 the previous active bindings in place. If startup cannot register a binding,
 report the problem in Settings. Let the user use and configure the other
 binding independently. Standard chords use macOS hotkey registration. Fn
-bindings use a keyboard event tap and require Accessibility access.
+bindings use a keyboard event tap and require Accessibility access. Activate
+permission-blocked Fn bindings when the user grants access and returns to
+the app.
 
 Settings actions become read-only as soon as dictation starts. Apply the
 native controls' enabled state after SwiftUI finishes updating the window

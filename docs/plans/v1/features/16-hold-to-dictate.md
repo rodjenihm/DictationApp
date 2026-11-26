@@ -44,3 +44,12 @@
   two Fn–Space presses toggled recording, and pressing Space during a
   standalone Fn hold kept recording after Fn release. Physical Fn key
   behavior was outside this verification.
+
+## Fn defaults
+
+- Signed Debug and Release builds passed. Launched the installed Release
+  build with temporary shortcut preference overrides that exercised both
+  defaults. Settings showed Fn–Space for toggle and Fn for hold, with no
+  toggle reset action. Relaunched normally with the saved preferences.
+- The permission grant transition was reviewed in code and was outside the
+  manual verification.

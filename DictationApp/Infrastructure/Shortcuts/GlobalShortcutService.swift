@@ -2,7 +2,7 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 
-enum GlobalShortcutRegistrationError: LocalizedError {
+enum GlobalShortcutRegistrationError: LocalizedError, Equatable {
     case missingModifier
     case standaloneFunctionKeyRequiresHold
     case functionKeyPermissionRequired
@@ -121,20 +121,56 @@ final class GlobalShortcutService {
         functionMonitor.onAction = { [weak self] action, receivedAt in
             self?.handleFunctionAction(action, receivedAt: receivedAt)
         }
-        defer { updateFunctionBindings() }
+        registerShortcuts(
+            toggle: toggle,
+            hold: hold,
+            registerToggle: true,
+            registerHold: true
+        )
 
-        do throws(GlobalShortcutRegistrationError) {
-            guard !toggle.isStandaloneFunctionKey else {
-                throw .standaloneFunctionKeyRequiresHold
-            }
-            try validateCandidate(toggle)
-            toggleRegistration = try register(toggle)
-            registrationError = nil
-        } catch {
-            registrationError = error
+        if let error = registrationError ?? holdRegistrationError {
+            throw error
+        }
+    }
+
+    func retryPermissionBlockedShortcuts(toggle: GlobalShortcut, hold: GlobalShortcut?) -> Bool {
+        let retryToggle = registrationError == .functionKeyPermissionRequired
+        let retryHold = holdRegistrationError == .functionKeyPermissionRequired
+        guard retryToggle || retryHold, CGPreflightPostEventAccess() else {
+            return false
         }
 
-        if let hold {
+        registerShortcuts(
+            toggle: toggle,
+            hold: hold,
+            registerToggle: retryToggle,
+            registerHold: retryHold
+        )
+        return (retryToggle && toggleRegistration != nil) || (retryHold && holdRegistration != nil)
+    }
+
+    private func registerShortcuts(
+        toggle: GlobalShortcut,
+        hold: GlobalShortcut?,
+        registerToggle: Bool,
+        registerHold: Bool
+    ) {
+        defer { updateFunctionBindings() }
+
+        if registerToggle {
+            do throws(GlobalShortcutRegistrationError) {
+                guard !toggle.isStandaloneFunctionKey else {
+                    throw .standaloneFunctionKeyRequiresHold
+                }
+                try validateCandidate(toggle)
+                toggleRegistration = try register(toggle)
+                registrationError = nil
+            } catch {
+                registrationError = error
+            }
+        }
+
+        if registerHold, let hold {
             do {
                 try validateDistinctShortcuts(toggle: toggle, hold: hold)
                 try validateCandidate(hold)
@@ -143,10 +179,8 @@ final class GlobalShortcutService {
             } catch {
                 holdRegistrationError = error
             }
-        }
-
-        if let error = registrationError ?? holdRegistrationError {
-            throw error
+        } else if registerHold {
+            holdRegistrationError = nil
         }
     }
 
