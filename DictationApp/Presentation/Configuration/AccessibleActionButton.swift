@@ -45,7 +45,7 @@ struct AccessibleActionButton: NSViewRepresentable {
     }
 }
 
-final class AccessibleButtonControl: NSButton {
+final class AccessibleButtonControl: SettingsNativeButton {
     var onAction: (() -> Void)?
     var isDefaultAction = false {
         didSet {
@@ -74,6 +74,9 @@ final class AccessibleButtonControl: NSButton {
 
     @objc
     private func performAction() {
+        guard isButtonActionEnabled else {
+            return
+        }
         onAction?()
     }
 

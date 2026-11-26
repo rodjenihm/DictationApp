@@ -1,11 +1,25 @@
 import Carbon.HIToolbox
+import CoreGraphics
 
 struct GlobalShortcut: Codable, Equatable {
     let keyCode: UInt32
     let modifiers: UInt32
 
-    static let supportedModifierMask = UInt32(
+    static let carbonModifierMask = UInt32(
         cmdKey | optionKey | controlKey | shiftKey
+    )
+    static let functionModifier = UInt32(CGEventFlags.maskSecondaryFn.rawValue)
+    static let functionKeyCode = UInt32(kVK_Function)
+    private static let supportedModifierMask = carbonModifierMask | functionModifier
+
+    static let standaloneFunctionKey = GlobalShortcut(
+        keyCode: functionKeyCode,
+        modifiers: functionModifier
+    )
+
+    static let functionSpace = GlobalShortcut(
+        keyCode: UInt32(kVK_Space),
+        modifiers: functionModifier
     )
 
     static let defaultShortcut = GlobalShortcut(
@@ -23,13 +37,34 @@ struct GlobalShortcut: Codable, Equatable {
         self.modifiers = modifiers & Self.supportedModifierMask
     }
 
-    var hasStandardModifier: Bool {
-        modifiers != 0
+    var usesFunctionModifier: Bool {
+        modifiers & Self.functionModifier != 0
+    }
+
+    var isStandaloneFunctionKey: Bool {
+        self == Self.standaloneFunctionKey
+    }
+
+    var isConfigurable: Bool {
+        if usesFunctionModifier {
+            return isStandaloneFunctionKey || self == Self.functionSpace
+        }
+
+        return modifiers != 0
+            && modifiers & ~Self.carbonModifierMask == 0
+            && keyCode != Self.functionKeyCode
     }
 
     var displayName: String {
+        if isStandaloneFunctionKey {
+            return "Fn"
+        }
+
         var result = ""
 
+        if usesFunctionModifier {
+            result += "Fn–"
+        }
         if modifiers & UInt32(controlKey) != 0 {
             result += "⌃"
         }

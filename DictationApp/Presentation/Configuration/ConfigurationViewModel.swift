@@ -818,6 +818,9 @@ final class ConfigurationViewModel {
             return false
         }
         do {
+            if toggle.isStandaloneFunctionKey {
+                throw GlobalShortcutRegistrationError.standaloneFunctionKeyRequiresHold
+            }
             try shortcutService.validateDistinctShortcuts(toggle: toggle, hold: hold)
             if let candidate {
                 try shortcutService.validateCandidate(candidate)
@@ -832,19 +835,25 @@ final class ConfigurationViewModel {
     }
 
     private func refreshShortcutAvailability() {
-        if shortcutService.activeShortcut == nil, shortcutService.registrationError != nil {
+        if shortcutService.activeShortcut == nil, let error = shortcutService.registrationError {
+            let guidance = savedShortcut.usesFunctionModifier
+                ? error.localizedDescription
+                : "Choose a different shortcut and save."
             toggleShortcutAvailabilityMessage =
-                "The saved toggle shortcut (\(savedShortcut.displayName)) is unavailable. Choose a different shortcut and save."
+                "The saved toggle shortcut (\(savedShortcut.displayName)) is unavailable. \(guidance)"
         } else {
             toggleShortcutAvailabilityMessage = nil
         }
 
         if let savedHoldShortcut,
             shortcutService.activeHoldShortcut == nil,
-            shortcutService.holdRegistrationError != nil
+            let error = shortcutService.holdRegistrationError
         {
+            let guidance = savedHoldShortcut.usesFunctionModifier
+                ? error.localizedDescription
+                : "Choose a different shortcut or disable it, then save."
             holdShortcutAvailabilityMessage =
-                "The saved hold shortcut (\(savedHoldShortcut.displayName)) is unavailable. Choose a different shortcut or disable it, then save."
+                "The saved hold shortcut (\(savedHoldShortcut.displayName)) is unavailable. \(guidance)"
         } else {
             holdShortcutAvailabilityMessage = nil
         }

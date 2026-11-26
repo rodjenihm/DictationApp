@@ -7,8 +7,10 @@ Provide two configurable global shortcuts in **Settings → General**.
 | Toggle dictation | Option–Space | Press to start. Press again to stop and transcribe. |
 | Hold to dictate | Control–Shift–Space | Press the chord to start. Release the trigger key to stop and transcribe. |
 
-Each shortcut uses a non-modifier key with at least one of Command, Option,
-Control, or Shift. Assign distinct chords. Hold to dictate can be disabled.
+Each shortcut accepts a non-modifier key with at least one of Command,
+Option, Control, or Shift. Either shortcut also accepts Fn–Space, and hold
+to dictate accepts Fn alone. Assign distinct bindings. Hold to dictate can
+be disabled.
 Keep the existing saved toggle chord on upgrade. Use the hold default when
 no hold preference exists, unless the toggle already uses that chord.
 
@@ -21,9 +23,19 @@ recording. Press Escape or select **Cancel** to discard an active session.
 The resulting audio uses the same minimum duration, transcription, optional
 cleanup, and text delivery paths as toggle dictation.
 
+Allow 150 ms before starting a standalone Fn hold so a chord can arrive
+first. When Fn–Space toggles dictation and Space arrives after the hold
+has started, the same recording continues as a toggle session. Releasing
+Fn then leaves the recording active. Other Fn key combinations pass
+through to macOS or the frontmost app.
+
 Apply shortcut edits with **Save Changes**. Reject duplicate bindings and
-report macOS or application conflicts. A failed registration leaves the
-previous active bindings in place. If startup cannot register a binding,
+report known macOS or application conflicts. A failed registration leaves
+the previous active bindings in place. If startup cannot register a binding,
 report the problem in Settings. Let the user use and configure the other
-binding independently. Use the existing macOS hotkey registration mechanism
-and permission model.
+binding independently. Standard chords use macOS hotkey registration. Fn
+bindings use a keyboard event tap and require Accessibility access.
+
+Settings actions become read-only as soon as dictation starts. Apply the
+native controls' enabled state after SwiftUI finishes updating the window
+so AppKit can change keyboard focus without reentering the update.

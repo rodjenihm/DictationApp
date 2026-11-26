@@ -41,13 +41,14 @@ struct ShortcutRecorder: NSViewRepresentable {
     }
 }
 
-final class ShortcutRecorderControl: NSButton {
+final class ShortcutRecorderControl: SettingsNativeButton {
     var shortcut: GlobalShortcut?
     var shortcutAccessibilityLabel = "Dictation shortcut"
     var onCandidate: ((GlobalShortcut) -> Void)?
     var onCaptureChanged: ((ObjectIdentifier, ((GlobalShortcut) -> Void)?) -> Void)?
 
     private var isRecording = false
+    private var isStandaloneFunctionCandidate = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -76,13 +77,14 @@ final class ShortcutRecorderControl: NSButton {
 
     @objc
     private func beginRecording() {
-        guard isEnabled, window?.isKeyWindow == true,
+        guard isButtonActionEnabled, window?.isKeyWindow == true,
             window?.makeFirstResponder(self) == true
         else {
             return
         }
 
         isRecording = true
+        isStandaloneFunctionCandidate = false
         onCaptureChanged?(ObjectIdentifier(self)) { [weak self] candidate in
             self?.acceptCandidate(candidate)
         }
@@ -91,8 +93,13 @@ final class ShortcutRecorderControl: NSButton {
     }
 
     override func keyDown(with event: NSEvent) {
-        guard isRecording, !event.isARepeat else {
+        guard isRecording else {
             super.keyDown(with: event)
+            return
+        }
+
+        isStandaloneFunctionCandidate = false
+        guard !event.isARepeat else {
             return
         }
 
@@ -104,6 +111,13 @@ final class ShortcutRecorderControl: NSButton {
         let modifiers = Self.carbonModifiers(
             from: event.modifierFlags
         )
+        if event.keyCode == UInt16(kVK_Space), modifiers == 0,
+            event.modifierFlags.contains(.function)
+        {
+            acceptCandidate(.functionSpace)
+            return
+        }
+
         guard modifiers != 0 else {
             NSSound.beep()
             title = "Include a modifier"
@@ -117,6 +131,25 @@ final class ShortcutRecorderControl: NSButton {
         )
 
         acceptCandidate(candidate)
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        guard isRecording else {
+            super.flagsChanged(with: event)
+            return
+        }
+
+        guard UInt32(event.keyCode) == GlobalShortcut.functionKeyCode else {
+            isStandaloneFunctionCandidate = false
+            super.flagsChanged(with: event)
+            return
+        }
+
+        if event.modifierFlags.contains(.function) {
+            isStandaloneFunctionCandidate = Self.carbonModifiers(from: event.modifierFlags) == 0
+        } else if isStandaloneFunctionCandidate {
+            acceptCandidate(.standaloneFunctionKey)
+        }
     }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -163,7 +196,7 @@ final class ShortcutRecorderControl: NSButton {
         )
         setAccessibilityHelp(
             isRecording
-                ? "Press a modified key, or Escape to cancel."
+                ? "Press a shortcut, or Escape to cancel."
                 : "Press Space or Return to record a new shortcut."
         )
     }
@@ -173,13 +206,14 @@ final class ShortcutRecorderControl: NSButton {
             return
         }
         isRecording = false
+        isStandaloneFunctionCandidate = false
         onCaptureChanged?(ObjectIdentifier(self), nil)
         refreshTitle()
         refreshAccessibility()
     }
 
     private func acceptCandidate(_ candidate: GlobalShortcut) {
-        guard isRecording, isEnabled, window?.isKeyWindow == true else {
+        guard isRecording, isButtonActionEnabled, window?.isKeyWindow == true else {
             cancelCapture()
             return
         }

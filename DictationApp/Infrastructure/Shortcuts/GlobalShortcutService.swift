@@ -1,8 +1,12 @@
 import Carbon.HIToolbox
+import CoreGraphics
 import Foundation
 
 enum GlobalShortcutRegistrationError: LocalizedError {
     case missingModifier
+    case standaloneFunctionKeyRequiresHold
+    case functionKeyPermissionRequired
+    case functionKeyEventTapUnavailable
     case duplicateBindings
     case reservedBySystem
     case conflict
@@ -12,7 +16,13 @@ enum GlobalShortcutRegistrationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingModifier:
-            "Choose a shortcut that includes Command, Option, Control, or Shift."
+            "Choose Fn–Space or a shortcut that includes Command, Option, Control, or Shift."
+        case .standaloneFunctionKeyRequiresHold:
+            "Use Fn–Space for toggle dictation. Fn alone is available for hold to dictate."
+        case .functionKeyPermissionRequired:
+            "Allow DictationApp in Accessibility settings to use global Fn shortcuts, then try again."
+        case .functionKeyEventTapUnavailable:
+            "The global Fn shortcut listener could not start. Try again or choose another shortcut."
         case .duplicateBindings:
             "Choose different shortcuts for toggle dictation and hold to dictate."
         case .reservedBySystem:
@@ -46,11 +56,14 @@ enum SessionCancellationShortcutRegistrationError: LocalizedError {
 
 @MainActor
 final class GlobalShortcutService {
-    var onShortcutPressed: ((ContinuousClock.Instant) -> Void)?
+    var onShortcutPressed: ((ContinuousClock.Instant, _ replacesHold: Bool) -> Void)?
     var onHoldShortcutPressed: ((ContinuousClock.Instant) -> Void)?
     var onHoldShortcutReleased: ((ContinuousClock.Instant) -> Void)?
+    var onHoldShortcutCancelled: (() -> Void)?
     var onSessionCancellationShortcutPressed: (() -> Void)?
-    var onShortcutCaptured: ((GlobalShortcut) -> Void)?
+    var onShortcutCaptured: ((GlobalShortcut) -> Void)? {
+        didSet { functionMonitor.isCapturingShortcut = onShortcutCaptured != nil }
+    }
 
     var activeShortcut: GlobalShortcut? { toggleRegistration?.shortcut }
     var activeHoldShortcut: GlobalShortcut? { holdRegistration?.shortcut }
@@ -60,7 +73,7 @@ final class GlobalShortcutService {
     private struct Registration {
         let shortcut: GlobalShortcut
         let id: UInt32
-        let ref: EventHotKeyRef
+        let ref: EventHotKeyRef?
     }
 
     private static let signature: OSType = 0x44494354
@@ -72,6 +85,7 @@ final class GlobalShortcutService {
     private var cancellationRegistration: Registration?
     private var holdCancellationRegistration: Registration?
     private var nextHotKeyID: UInt32 = 1
+    private let functionMonitor = FunctionShortcutMonitor()
 
     func start(toggle: GlobalShortcut, hold: GlobalShortcut?) throws {
         guard eventHandlerRef == nil else {
@@ -104,8 +118,15 @@ final class GlobalShortcutService {
         }
 
         eventHandlerRef = installedHandler
+        functionMonitor.onAction = { [weak self] action, receivedAt in
+            self?.handleFunctionAction(action, receivedAt: receivedAt)
+        }
+        defer { updateFunctionBindings() }
 
-        do {
+        do throws(GlobalShortcutRegistrationError) {
+            guard !toggle.isStandaloneFunctionKey else {
+                throw .standaloneFunctionKeyRequiresHold
+            }
             try validateCandidate(toggle)
             toggleRegistration = try register(toggle)
             registrationError = nil
@@ -140,9 +161,13 @@ final class GlobalShortcutService {
             try committing()
             return
         }
+        defer { updateFunctionBindings() }
 
         try validateDistinctShortcuts(toggle: toggle, hold: hold)
         if updateToggle {
+            guard !toggle.isStandaloneFunctionKey else {
+                throw GlobalShortcutRegistrationError.standaloneFunctionKeyRequiresHold
+            }
             try validateCandidate(toggle)
         }
         if updateHold, let hold {
@@ -175,14 +200,14 @@ final class GlobalShortcutService {
             try committing()
         } catch {
             for registration in additions {
-                UnregisterEventHotKey(registration.ref)
+                unregister(registration)
             }
             throw error
         }
 
         for registration in existing
         where registration.id != newToggle?.id && registration.id != newHold?.id {
-            UnregisterEventHotKey(registration.ref)
+            unregister(registration)
         }
 
         if holdRegistration?.id != newHold?.id {
@@ -210,7 +235,7 @@ final class GlobalShortcutService {
     func validateCandidate(
         _ shortcut: GlobalShortcut
     ) throws(GlobalShortcutRegistrationError) {
-        guard shortcut.hasStandardModifier else {
+        guard shortcut.isConfigurable else {
             throw GlobalShortcutRegistrationError.missingModifier
         }
 
@@ -242,11 +267,12 @@ final class GlobalShortcutService {
             }
         }
 
-        if forHold, let modifiers = activeHoldShortcut?.modifiers {
+        functionMonitor.capturesEscape = true
+        if forHold, let hold = activeHoldShortcut, !hold.usesFunctionModifier {
             // Escape can also be pressed before releasing the hold modifiers.
             let modifiedEscape = GlobalShortcut(
                 keyCode: escapeCode,
-                modifiers: modifiers
+                modifiers: hold.modifiers
             )
             if !isReservedBySystem(modifiedEscape) {
                 holdCancellationRegistration = try? register(modifiedEscape)
@@ -256,9 +282,10 @@ final class GlobalShortcutService {
 
     func unregisterSessionCancellationShortcut() {
         if let cancellationRegistration {
-            UnregisterEventHotKey(cancellationRegistration.ref)
+            unregister(cancellationRegistration)
         }
         cancellationRegistration = nil
+        functionMonitor.capturesEscape = false
         unregisterHoldCancellationShortcut()
     }
 
@@ -266,11 +293,12 @@ final class GlobalShortcutService {
         unregisterSessionCancellationShortcut()
 
         if let toggleRegistration {
-            UnregisterEventHotKey(toggleRegistration.ref)
+            unregister(toggleRegistration)
         }
         if let holdRegistration {
-            UnregisterEventHotKey(holdRegistration.ref)
+            unregister(holdRegistration)
         }
+        functionMonitor.stop()
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)
         }
@@ -291,6 +319,16 @@ final class GlobalShortcutService {
 
         let candidateID = nextHotKeyID
         nextHotKeyID &+= 1
+
+        if shortcut.usesFunctionModifier {
+            guard CGPreflightPostEventAccess() else {
+                throw .functionKeyPermissionRequired
+            }
+            guard functionMonitor.start() else {
+                throw .functionKeyEventTapUnavailable
+            }
+            return Registration(shortcut: shortcut, id: candidateID, ref: nil)
+        }
 
         let hotKeyID = EventHotKeyID(signature: Self.signature, id: candidateID)
         var ref: EventHotKeyRef?
@@ -314,8 +352,24 @@ final class GlobalShortcutService {
 
     private func unregisterHoldCancellationShortcut() {
         if let holdCancellationRegistration {
-            UnregisterEventHotKey(holdCancellationRegistration.ref)
+            unregister(holdCancellationRegistration)
             self.holdCancellationRegistration = nil
+        }
+    }
+
+    private func unregister(_ registration: Registration) {
+        if let ref = registration.ref {
+            UnregisterEventHotKey(ref)
+        }
+    }
+
+    private func updateFunctionBindings() {
+        let toggle = activeShortcut.flatMap { $0.usesFunctionModifier ? $0 : nil }
+        let hold = activeHoldShortcut.flatMap { $0.usesFunctionModifier ? $0 : nil }
+        if toggle == nil, hold == nil {
+            functionMonitor.stop()
+        } else {
+            functionMonitor.updateBindings(toggle: toggle, hold: hold)
         }
     }
 
@@ -343,8 +397,37 @@ final class GlobalShortcutService {
             return keyCode.uint32Value == shortcut.keyCode
                 && (
                     modifiers.uint32Value
-                        & GlobalShortcut.supportedModifierMask
+                        & (GlobalShortcut.carbonModifierMask | GlobalShortcut.functionModifier)
                 ) == shortcut.modifiers
+        }
+    }
+
+    private func handleFunctionAction(
+        _ action: FunctionShortcutMonitor.Action,
+        receivedAt: ContinuousClock.Instant
+    ) {
+        switch action {
+        case .holdPressed, .holdReleased:
+            if let holdRegistration {
+                handleHotKey(
+                    id: holdRegistration.id,
+                    isPressed: action == .holdPressed,
+                    receivedAt: receivedAt
+                )
+            }
+        case .holdCancelled:
+            if isHoldKeyDown {
+                isHoldKeyDown = false
+                onHoldShortcutCancelled?()
+            }
+        case .togglePressed(let replacesHold):
+            if replacesHold {
+                isHoldKeyDown = false
+            }
+            onShortcutPressed?(receivedAt, replacesHold)
+        case .cancelSession:
+            isHoldKeyDown = false
+            onSessionCancellationShortcutPressed?()
         }
     }
 
@@ -375,7 +458,7 @@ final class GlobalShortcutService {
             if let onShortcutCaptured {
                 onShortcutCaptured(toggle.shortcut)
             } else {
-                onShortcutPressed?(receivedAt)
+                onShortcutPressed?(receivedAt, false)
             }
         }
     }

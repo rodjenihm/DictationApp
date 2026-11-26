@@ -101,7 +101,9 @@ Insertion boundary behavior:
 - Provide an equivalent Stop action through the menu-bar UI while recording.
 - Keep Cancel available through Escape, the overlay, and the menu-bar UI throughout an active session.
 - Configure both shortcuts or disable hold to dictate in Settings.
-- Reject duplicate shortcuts and shortcuts reserved by macOS.
+- Accept Fn–Space for either shortcut and Fn alone for hold to dictate.
+  Global Fn shortcuts require Accessibility access.
+- Reject duplicate shortcuts and known shortcuts reserved by macOS.
 - If a shortcut change fails to register, show an actionable conflict message
   and keep the previous active shortcuts.
 
@@ -352,14 +354,14 @@ Onboarding explains why Microphone and Accessibility permissions are used, but o
 Each permission has an explicit Enable action:
 
 - **Microphone:** Enable requests system microphone authorization. Recording cannot start without it.
-- **Accessibility:** Enable initiates the system trust flow required for automatic insertion.
+- **Accessibility:** Enable initiates the system trust flow required for automatic insertion and global Fn shortcuts.
 
 Permission behavior:
 
 - Show current permission status in onboarding and Settings.
 - Derive status from the corresponding macOS authorization API; do not persist a separate granted flag.
 - Recheck status before using the protected feature and when returning from System Settings.
-- If the user skips Accessibility, keep dictation available in clipboard-only mode.
+- If the user skips Accessibility, keep dictation available in clipboard-only mode with standard shortcuts.
 - If Accessibility is unavailable when insertion is attempted, leave the transcript on the clipboard and show the manual-paste fallback.
 - If the user skips Microphone setup, request it just in time on the first attempt to start recording.
 - If a permission was denied, explain the affected capability and provide an Open System Settings action rather than repeatedly triggering prompts.

@@ -105,7 +105,7 @@ struct ConfigurationGeneralView: View {
                 statusTitle: accessibilityStatusTitle,
                 granted: viewModel.accessibilityStatus == .granted,
                 detail:
-                    "Enables automatic insertion. Clipboard delivery remains available without it."
+                    "Enables automatic insertion and Fn shortcuts. Clipboard delivery remains available without it."
             ) {
                 accessibilityAction
             }

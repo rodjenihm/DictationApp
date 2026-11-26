@@ -47,7 +47,7 @@ Settings changes are held together until **Save Changes** succeeds. Shortcut, pr
 - Xcode 26.6 or later
 - OpenAI API key when selecting OpenAI for either stage
 
-Microphone permission is required for recording. Accessibility permission is optional and enables automatic text insertion.
+Microphone permission is required for recording. Accessibility permission enables automatic text insertion and global Fn shortcuts.
 
 ## Build and run
 
@@ -74,6 +74,12 @@ Use either global shortcut to dictate.
 
 Change either shortcut or disable hold to dictate in **Settings → General**,
 then select **Save Changes**.
+
+To use the Fn key, set **Toggle dictation** to **Fn–Space** and **Hold to
+dictate** to **Fn**. Release **Fn** to stop a hold recording. Global Fn
+shortcuts require Accessibility access. If macOS also runs an action when
+you press Fn alone, set **Press fn key to** to **Do Nothing** in macOS
+Keyboard settings.
 
 After transcription, the app inserts the text at the currently focused cursor. If insertion fails or cannot be confirmed, the transcript remains on the clipboard for manual paste.
 

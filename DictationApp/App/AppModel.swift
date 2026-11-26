@@ -179,14 +179,28 @@ final class AppModel: ObservableObject {
                     self?.refreshStatus()
                 }
             }
-        shortcutService.onShortcutPressed = { [weak self] receivedAt in
-            self?.performPrimaryAction(receivedAt: receivedAt)
+        shortcutService.onShortcutPressed = { [weak self] receivedAt, replacesHold in
+            guard let self else {
+                return
+            }
+            if replacesHold && self.holdOwnsCapture {
+                self.holdOwnsCapture = false
+                return
+            }
+            self.performPrimaryAction(receivedAt: receivedAt)
         }
         shortcutService.onHoldShortcutPressed = { [weak self] receivedAt in
             self?.performPrimaryAction(receivedAt: receivedAt, fromHold: true)
         }
         shortcutService.onHoldShortcutReleased = { [weak self] receivedAt in
             self?.endHold(receivedAt: receivedAt)
+        }
+        shortcutService.onHoldShortcutCancelled = { [weak self] in
+            guard let self, self.holdOwnsCapture else {
+                return
+            }
+            self.holdOwnsCapture = false
+            self.dictationCoordinator.cancelImmediately()
         }
         shortcutService.onSessionCancellationShortcutPressed = {
             [weak self] in

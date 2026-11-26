@@ -86,7 +86,8 @@ final class SettingsStore {
         guard
             let data = defaults.data(forKey: Key.globalShortcut),
             let shortcut = try? decoder.decode(GlobalShortcut.self, from: data),
-            shortcut.hasStandardModifier
+            shortcut.isConfigurable,
+            !shortcut.isStandaloneFunctionKey
         else {
             return .defaultShortcut
         }
@@ -102,7 +103,7 @@ final class SettingsStore {
             shortcut = .defaultHoldShortcut
         }
 
-        guard let shortcut, shortcut.hasStandardModifier, shortcut != toggle else {
+        guard let shortcut, shortcut.isConfigurable, shortcut != toggle else {
             return nil
         }
         return shortcut

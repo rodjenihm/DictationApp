@@ -27,3 +27,20 @@
   normal stop, cancellation, and late release. Live audio capture,
   provider delivery, and Settings persistence across relaunch remain
   unverified.
+
+## Fn shortcuts and Settings focus fix
+
+- Signed Debug and Release builds passed with Xcode 27.2. Both app
+  bundles passed strict code-signature verification.
+- On macOS 27.0.1, started recording with the toggle shortcut recorder
+  focused. Settings stayed responsive, disabled both recorders, and
+  re-enabled them after Escape cancelled recording. The unified log
+  showed no AttributeGraph cycle errors during the transition.
+- Configured Fn–Space for toggle and Fn for hold through Settings and
+  confirmed both saved bindings after quitting and relaunching. Verified
+  that the installed app had an enabled session event tap for key-down,
+  key-up, and modifier events.
+- With synthesized keyboard events, verified Fn release stopped a hold,
+  two Fn–Space presses toggled recording, and pressing Space during a
+  standalone Fn hold kept recording after Fn release. Physical Fn key
+  behavior was outside this verification.
