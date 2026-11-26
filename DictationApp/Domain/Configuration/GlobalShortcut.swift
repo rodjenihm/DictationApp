@@ -13,6 +13,11 @@ struct GlobalShortcut: Codable, Equatable {
         modifiers: UInt32(optionKey)
     )
 
+    static let defaultHoldShortcut = GlobalShortcut(
+        keyCode: UInt32(kVK_Space),
+        modifiers: UInt32(controlKey | shiftKey)
+    )
+
     init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
         self.modifiers = modifiers & Self.supportedModifierMask

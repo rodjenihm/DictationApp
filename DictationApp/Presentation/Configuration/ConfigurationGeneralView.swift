@@ -6,7 +6,7 @@ struct ConfigurationGeneralView: View {
     var body: some View {
         ConfigurationPage(
             title: "General",
-            detail: "Set up your microphone, shortcut, and permissions.",
+            detail: "Set up your microphone, shortcuts, and permissions.",
             systemImage: SettingsDestination.general.systemImage
         ) {
             ConfigurationFlowSummary(viewModel: viewModel)
@@ -207,17 +207,19 @@ struct ConfigurationGeneralView: View {
 
     private var shortcutSection: some View {
         ConfigurationSection(
-            "Global Shortcut",
+            "Global Shortcuts",
             systemImage: "keyboard"
         ) {
-            ConfigurationSettingRow("Start or stop") {
+            ConfigurationSettingRow("Toggle dictation") {
                 ShortcutRecorder(
                     shortcut: viewModel.globalShortcut,
-                    onCandidate: viewModel.updateGlobalShortcut
+                    accessibilityLabel: "Toggle dictation shortcut",
+                    onCandidate: viewModel.updateGlobalShortcut,
+                    onCaptureChanged: viewModel.setShortcutCapture
                 )
                 .configurationFieldControl()
             } detail: {
-                Text("Select the shortcut to record a new one, then save your changes.")
+                Text("Press once to start recording and again to stop.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -228,6 +230,53 @@ struct ConfigurationGeneralView: View {
                     Button("Reset to Option–Space") {
                         viewModel.resetGlobalShortcut()
                     }
+                }
+            }
+
+            if let message = viewModel.toggleShortcutAvailabilityMessage {
+                ConfigurationFormSupplementary {
+                    ConfigurationIssueLabel(message: message)
+                }
+            }
+
+            ConfigurationSettingRow("Hold to dictate") {
+                ShortcutRecorder(
+                    shortcut: viewModel.holdShortcut,
+                    accessibilityLabel: "Hold to dictate shortcut",
+                    onCandidate: { viewModel.updateHoldShortcut($0) },
+                    onCaptureChanged: viewModel.setShortcutCapture
+                )
+                .configurationFieldControl()
+            } detail: {
+                Text(
+                    viewModel.holdShortcut == nil
+                        ? "Disabled. Set a shortcut to record while you hold it."
+                        : "Hold the shortcut to record, then release its main key to stop."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if viewModel.holdShortcut != .defaultHoldShortcut {
+                ConfigurationFormSupplementary {
+                    Button("Use Default Hold Shortcut") {
+                        viewModel.updateHoldShortcut(.defaultHoldShortcut)
+                    }
+                }
+            }
+
+            if viewModel.holdShortcut != nil {
+                ConfigurationFormSupplementary {
+                    Button("Disable Hold Shortcut") {
+                        viewModel.updateHoldShortcut(nil)
+                    }
+                }
+            }
+
+            if let message = viewModel.holdShortcutAvailabilityMessage {
+                ConfigurationFormSupplementary {
+                    ConfigurationIssueLabel(message: message)
                 }
             }
 

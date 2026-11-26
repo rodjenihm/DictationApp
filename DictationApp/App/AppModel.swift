@@ -26,6 +26,7 @@ final class AppModel: ObservableObject {
     private let providerRuntimeHealth =
         ProviderRuntimeHealthStore()
     private var hasStarted = false
+    private var holdOwnsCapture = false
     private var sessionStateCancellable: AnyCancellable?
     private var providerSettingsCancellables: [AnyCancellable] = []
 
@@ -181,19 +182,27 @@ final class AppModel: ObservableObject {
         shortcutService.onShortcutPressed = { [weak self] receivedAt in
             self?.performPrimaryAction(receivedAt: receivedAt)
         }
+        shortcutService.onHoldShortcutPressed = { [weak self] receivedAt in
+            self?.performPrimaryAction(receivedAt: receivedAt, fromHold: true)
+        }
+        shortcutService.onHoldShortcutReleased = { [weak self] receivedAt in
+            self?.endHold(receivedAt: receivedAt)
+        }
         shortcutService.onSessionCancellationShortcutPressed = {
             [weak self] in
             self?.cancelDictation()
         }
 
+        let settings = settingsStore.load()
         do {
             try shortcutService.start(
-                with: settingsStore.load().globalShortcut
+                toggle: settings.globalShortcut,
+                hold: settings.holdShortcut
             )
             AppLog.lifecycle.info("Global shortcut service started")
         } catch {
             AppLog.lifecycle.error(
-                "Global shortcut service failed to start"
+                "One or more global shortcuts could not be registered"
             )
             // Settings exposes the actionable registration error.
         }
@@ -251,17 +260,21 @@ final class AppModel: ObservableObject {
         AppLog.lifecycle.notice("Application shutdown cleanup finished")
     }
 
-    func performPrimaryAction(receivedAt: ContinuousClock.Instant = .now) {
+    func performPrimaryAction(
+        receivedAt: ContinuousClock.Instant = .now,
+        fromHold: Bool = false
+    ) {
         switch dictationCoordinator.state {
         case .idle:
-            startDictation(receivedAt: receivedAt)
+            startDictation(receivedAt: receivedAt, fromHold: fromHold)
         case .rawTranscriptFallback:
             dictationCoordinator.dismissDeliveryStatus()
-            startDictation(receivedAt: receivedAt)
-        case .recording:
+            startDictation(receivedAt: receivedAt, fromHold: fromHold)
+        case .recording where !fromHold:
             dictationCoordinator.stop(receivedAt: receivedAt)
         case
             .preparing,
+            .recording,
             .finalizing,
             .completed,
             .transcribing,
@@ -308,7 +321,26 @@ final class AppModel: ObservableObject {
         NSApp.terminate(nil)
     }
 
-    private func startDictation(receivedAt: ContinuousClock.Instant) {
+    private func endHold(receivedAt: ContinuousClock.Instant) {
+        guard holdOwnsCapture else {
+            return
+        }
+        holdOwnsCapture = false
+
+        switch dictationCoordinator.state {
+        case .preparing:
+            dictationCoordinator.cancelImmediately()
+        case .recording:
+            dictationCoordinator.stop(receivedAt: receivedAt)
+        default:
+            break
+        }
+    }
+
+    private func startDictation(
+        receivedAt: ContinuousClock.Instant,
+        fromHold: Bool
+    ) {
         guard !configurationViewModel.isValidating else {
             AppLog.session.notice(
                 "Dictation start blocked by configuration validation"
@@ -347,7 +379,9 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            try shortcutService.registerSessionCancellationShortcut()
+            try shortcutService.registerSessionCancellationShortcut(
+                forHold: fromHold
+            )
         } catch {
             AppLog.session.error(
                 "Dictation start blocked by cancellation shortcut conflict"
@@ -361,6 +395,7 @@ final class AppModel: ObservableObject {
             return
         }
 
+        holdOwnsCapture = fromHold
         dictationCoordinator.start(
             configuration: SessionConfiguration(
                 configuration: configuration,
@@ -418,6 +453,13 @@ final class AppModel: ObservableObject {
     }
 
     private func apply(_ state: DictationSessionState) {
+        switch state {
+        case .preparing, .recording:
+            break
+        default:
+            holdOwnsCapture = false
+        }
+
         configurationViewModel.setSessionAccess(
             configurationAccess(for: state)
         )

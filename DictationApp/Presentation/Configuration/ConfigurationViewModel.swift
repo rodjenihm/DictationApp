@@ -85,6 +85,7 @@ enum ConfigurationSaveResult: Equatable {
 struct ConfigurationDraft: Equatable {
     var configuration: AppConfiguration
     var shortcut: GlobalShortcut
+    var holdShortcut: GlobalShortcut?
     var soundCuesEnabled: Bool
 }
 
@@ -100,6 +101,9 @@ final class ConfigurationViewModel {
             }
             if selectedDestination != .providers {
                 selectedProviderDetail = nil
+            }
+            if selectedDestination != .general {
+                endShortcutCapture()
             }
             if persistsTopLevelNavigation {
                 settingsStore.saveLastSettingsDestination(
@@ -144,6 +148,8 @@ final class ConfigurationViewModel {
     var soundCuesEnabled = true
     private(set) var globalShortcut =
         GlobalShortcut.defaultShortcut
+    private(set) var holdShortcut: GlobalShortcut? =
+        GlobalShortcut.defaultHoldShortcut
 
     private(set) var microphoneStatus:
         MicrophonePermissionStatus = .notDetermined
@@ -152,6 +158,8 @@ final class ConfigurationViewModel {
     private(set) var speechRecognitionStatus:
         SpeechRecognitionPermissionStatus = .notDetermined
     private(set) var shortcutErrorMessage: String?
+    private(set) var toggleShortcutAvailabilityMessage: String?
+    private(set) var holdShortcutAvailabilityMessage: String?
     private(set) var successMessage: String?
     private(set) var issues: [ConfigurationIssue] = []
     private(set) var hasCompletedFirstRun = false
@@ -188,6 +196,12 @@ final class ConfigurationViewModel {
         ProviderRuntimeHealthStore
     private var savedConfiguration: AppConfiguration = .default
     private var savedShortcut = GlobalShortcut.defaultShortcut
+    private var savedHoldShortcut: GlobalShortcut? =
+        GlobalShortcut.defaultHoldShortcut
+    private var retriesToggleShortcutRegistration = false
+    private var retriesHoldShortcutRegistration = false
+    @ObservationIgnored
+    private var shortcutCaptureOwner: ObjectIdentifier?
     private var savedSoundCuesEnabled = true
     private var transcriptionModelsByProvider:
         [ProviderID: ModelSelection] = [:]
@@ -326,6 +340,8 @@ final class ConfigurationViewModel {
             return true
         }
         return draft != savedBaseline
+            || retriesToggleShortcutRegistration
+            || retriesHoldShortcutRegistration
             || providerRegistry.settingsModules.contains(where: \.isDirty)
     }
 
@@ -535,7 +551,8 @@ final class ConfigurationViewModel {
     func isDirty(_ destination: SettingsDestination) -> Bool {
         switch destination {
         case .general:
-            return globalShortcut != savedShortcut
+            return shouldUpdateToggleShortcut
+                || shouldUpdateHoldShortcut
                 || audioInputPreference
                     != savedConfiguration.audioInputPreference
                 || soundCuesEnabled != savedSoundCuesEnabled
@@ -621,6 +638,9 @@ final class ConfigurationViewModel {
             return
         }
         sessionAccess = access
+        if access != .editable {
+            endShortcutCapture()
+        }
         switch access {
         case .transcriptionRepair:
             presentationMode = .transcriptionRepair
@@ -638,12 +658,17 @@ final class ConfigurationViewModel {
         guard !isValidating else {
             return
         }
+        endShortcutCapture()
         let stored = settingsStore.load()
         savedConfiguration = stored.configuration
         savedShortcut = stored.globalShortcut
+        savedHoldShortcut = stored.holdShortcut
+        retriesToggleShortcutRegistration = false
+        retriesHoldShortcutRegistration = false
         savedSoundCuesEnabled = stored.soundCuesEnabled
         hasCompletedFirstRun = stored.hasCompletedFirstRun
         globalShortcut = stored.globalShortcut
+        holdShortcut = stored.holdShortcut
         soundCuesEnabled = stored.soundCuesEnabled
         apply(stored.configuration)
         if
@@ -667,6 +692,7 @@ final class ConfigurationViewModel {
 
     func refreshSystemState() {
         audioInputDeviceService.refresh()
+        refreshShortcutAvailability()
         microphoneStatus = permissionService.microphoneStatus()
         accessibilityStatus = permissionService.accessibilityStatus()
         speechRecognitionStatus =
@@ -719,32 +745,122 @@ final class ConfigurationViewModel {
     }
 
     func updateGlobalShortcut(_ candidate: GlobalShortcut) {
-        guard
-            presentationMode == .full,
-            sessionAccess == .editable
-        else {
+        guard validateShortcutEdit(
+            candidate,
+            toggle: candidate,
+            hold: holdShortcut
+        ) else {
             return
         }
-        do {
-            try shortcutService.validateCandidate(candidate)
-            globalShortcut = candidate
-            shortcutErrorMessage = nil
-            issues.removeAll { $0.field == .shortcut }
-        } catch {
-            shortcutErrorMessage = error.localizedDescription
-            replaceIssue(
-                ConfigurationIssue(
-                    destination: .general,
-                    provider: nil,
-                    field: .shortcut,
-                    message: error.localizedDescription
-                )
-            )
-        }
+        globalShortcut = candidate
+        retriesToggleShortcutRegistration = candidate == savedShortcut
+            && shortcutService.activeShortcut != candidate
     }
 
     func resetGlobalShortcut() {
         updateGlobalShortcut(.defaultShortcut)
+    }
+
+    func updateHoldShortcut(_ candidate: GlobalShortcut?) {
+        guard validateShortcutEdit(
+            candidate,
+            toggle: globalShortcut,
+            hold: candidate
+        ) else {
+            return
+        }
+        holdShortcut = candidate
+        retriesHoldShortcutRegistration = candidate == savedHoldShortcut
+            && shortcutService.activeHoldShortcut != candidate
+    }
+
+    func setShortcutCapture(
+        owner: ObjectIdentifier,
+        receive: ((GlobalShortcut) -> Void)?
+    ) {
+        if let receive {
+            guard canEditShortcuts, selectedDestination == .general else {
+                return
+            }
+            shortcutCaptureOwner = owner
+            shortcutService.onShortcutCaptured = receive
+        } else if shortcutCaptureOwner == owner {
+            endShortcutCapture()
+        }
+    }
+
+    private func endShortcutCapture() {
+        guard shortcutCaptureOwner != nil else {
+            return
+        }
+        shortcutCaptureOwner = nil
+        shortcutService.onShortcutCaptured = nil
+    }
+
+    private var canEditShortcuts: Bool {
+        presentationMode == .full && sessionAccess == .editable && !isValidating
+    }
+
+    private var shouldUpdateToggleShortcut: Bool {
+        globalShortcut != savedShortcut || retriesToggleShortcutRegistration
+    }
+
+    private var shouldUpdateHoldShortcut: Bool {
+        holdShortcut != savedHoldShortcut || retriesHoldShortcutRegistration
+    }
+
+    private func validateShortcutEdit(
+        _ candidate: GlobalShortcut?,
+        toggle: GlobalShortcut,
+        hold: GlobalShortcut?
+    ) -> Bool {
+        guard canEditShortcuts else {
+            return false
+        }
+        do {
+            try shortcutService.validateDistinctShortcuts(toggle: toggle, hold: hold)
+            if let candidate {
+                try shortcutService.validateCandidate(candidate)
+            }
+            shortcutErrorMessage = nil
+            clearIssue(for: .shortcut)
+            return true
+        } catch {
+            reportShortcutIssue(error)
+            return false
+        }
+    }
+
+    private func refreshShortcutAvailability() {
+        if shortcutService.activeShortcut == nil, shortcutService.registrationError != nil {
+            toggleShortcutAvailabilityMessage =
+                "The saved toggle shortcut (\(savedShortcut.displayName)) is unavailable. Choose a different shortcut and save."
+        } else {
+            toggleShortcutAvailabilityMessage = nil
+        }
+
+        if let savedHoldShortcut,
+            shortcutService.activeHoldShortcut == nil,
+            shortcutService.holdRegistrationError != nil
+        {
+            holdShortcutAvailabilityMessage =
+                "The saved hold shortcut (\(savedHoldShortcut.displayName)) is unavailable. Choose a different shortcut or disable it, then save."
+        } else {
+            holdShortcutAvailabilityMessage = nil
+        }
+    }
+
+    private func reportShortcutIssue(_ error: Error) {
+        let message = error.localizedDescription
+        shortcutErrorMessage = message
+        replaceIssue(
+            ConfigurationIssue(
+                destination: .general,
+                provider: nil,
+                field: .shortcut,
+                message: message
+            )
+        )
     }
 
     func selectTranscriptionProvider(_ provider: ProviderID) {
@@ -810,6 +926,7 @@ final class ConfigurationViewModel {
 
     private func performSave() async -> ConfigurationSaveResult {
         let wasFirstRun = isFirstRun
+        endShortcutCapture()
         issues = []
         successMessage = nil
         shortcutErrorMessage = nil
@@ -824,7 +941,6 @@ final class ConfigurationViewModel {
 
         var committedProviders:
             [(AnyProviderSettingsModule, ProviderCommitToken)] = []
-        var shortcutWasChanged = false
 
         do {
             try Task.checkCancellation()
@@ -854,38 +970,39 @@ final class ConfigurationViewModel {
 
             try Task.checkCancellation()
 
-            if
-                presentationMode == .full,
-                globalShortcut != savedShortcut
-            {
-                try shortcutService.replaceShortcut(
-                    with: globalShortcut
-                )
-                shortcutWasChanged = true
-            }
-
-            for module in affectedModules
-            where module.isDirty {
-                if let token = try module.commit() {
-                    committedProviders.append((module, token))
+            func commitProviders() throws {
+                for module in affectedModules
+                where module.isDirty {
+                    if let token = try module.commit() {
+                        committedProviders.append((module, token))
+                    }
                 }
+                try Task.checkCancellation()
             }
-
-            try Task.checkCancellation()
 
             if presentationMode == .transcriptionRepair {
+                try commitProviders()
                 return try completeRepairSave(
                     configuration: configuration,
                     affectedModules: affectedModules
                 )
             }
 
-            try settingsStore.commit(
-                configuration: configuration,
-                hasCompletedFirstRun: true,
-                soundCuesEnabled: soundCuesEnabled,
-                globalShortcut: globalShortcut
-            )
+            try shortcutService.replaceShortcuts(
+                toggle: globalShortcut,
+                hold: holdShortcut,
+                updateToggle: shouldUpdateToggleShortcut,
+                updateHold: shouldUpdateHoldShortcut
+            ) {
+                try commitProviders()
+                try settingsStore.commit(
+                    configuration: configuration,
+                    hasCompletedFirstRun: true,
+                    soundCuesEnabled: soundCuesEnabled,
+                    globalShortcut: globalShortcut,
+                    holdShortcut: holdShortcut
+                )
+            }
 
             providerRegistry.settingsModules.forEach { $0.didSave() }
             savedConfiguration = configuration
@@ -897,6 +1014,10 @@ final class ConfigurationViewModel {
             postProcessingModelsByProvider =
                 configuration.postProcessing.modelsByProvider
             savedShortcut = globalShortcut
+            savedHoldShortcut = holdShortcut
+            retriesToggleShortcutRegistration = false
+            retriesHoldShortcutRegistration = false
+            refreshShortcutAvailability()
             savedSoundCuesEnabled = soundCuesEnabled
             hasCompletedFirstRun = true
 
@@ -928,17 +1049,11 @@ final class ConfigurationViewModel {
             }
             return .saved
         } catch is CancellationError {
-            rollback(
-                providers: committedProviders,
-                shortcutWasChanged: shortcutWasChanged
-            )
+            rollback(providers: committedProviders)
             successMessage = nil
             return .cancelled
         } catch {
-            rollback(
-                providers: committedProviders,
-                shortcutWasChanged: shortcutWasChanged
-            )
+            rollback(providers: committedProviders)
             mapSaveError(error)
             routeToFirstIssue()
             return .failed
@@ -970,7 +1085,8 @@ final class ConfigurationViewModel {
             configuration: repaired,
             hasCompletedFirstRun: hasCompletedFirstRun,
             soundCuesEnabled: savedSoundCuesEnabled,
-            globalShortcut: savedShortcut
+            globalShortcut: savedShortcut,
+            holdShortcut: savedHoldShortcut
         )
 
         affectedModules.forEach { $0.didSave() }
@@ -996,14 +1112,10 @@ final class ConfigurationViewModel {
 
     private func rollback(
         providers:
-            [(AnyProviderSettingsModule, ProviderCommitToken)],
-        shortcutWasChanged: Bool
+            [(AnyProviderSettingsModule, ProviderCommitToken)]
     ) {
         for (module, token) in providers.reversed() {
             module.rollback(token)
-        }
-        if shortcutWasChanged {
-            try? shortcutService.replaceShortcut(with: savedShortcut)
         }
     }
 
@@ -1243,6 +1355,7 @@ final class ConfigurationViewModel {
         return ConfigurationDraft(
             configuration: configuration,
             shortcut: globalShortcut,
+            holdShortcut: holdShortcut,
             soundCuesEnabled: soundCuesEnabled
         )
     }
@@ -1251,6 +1364,7 @@ final class ConfigurationViewModel {
         ConfigurationDraft(
             configuration: savedConfiguration,
             shortcut: savedShortcut,
+            holdShortcut: savedHoldShortcut,
             soundCuesEnabled: savedSoundCuesEnabled
         )
     }
@@ -1473,6 +1587,10 @@ final class ConfigurationViewModel {
     }
 
     private func mapSaveError(_ error: Error) {
+        if error is GlobalShortcutRegistrationError {
+            reportShortcutIssue(error)
+            return
+        }
         if let failure = error as? ProviderSettingsValidationFailure {
             mapProviderValidationFailure(failure)
             return

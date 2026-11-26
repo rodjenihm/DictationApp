@@ -5,14 +5,14 @@ import SwiftUI
 struct ShortcutRecorder: NSViewRepresentable {
     @Environment(\.isEnabled) private var environmentIsEnabled
 
-    let shortcut: GlobalShortcut
+    let shortcut: GlobalShortcut?
+    let accessibilityLabel: String
     let onCandidate: (GlobalShortcut) -> Void
+    let onCaptureChanged: (ObjectIdentifier, ((GlobalShortcut) -> Void)?) -> Void
 
     func makeNSView(context: Context) -> ShortcutRecorderControl {
         let control = ShortcutRecorderControl()
-        control.onCandidate = onCandidate
-        control.shortcut = shortcut
-        control.isEnabled = environmentIsEnabled
+        configure(control)
         return control
     }
 
@@ -20,8 +20,21 @@ struct ShortcutRecorder: NSViewRepresentable {
         _ control: ShortcutRecorderControl,
         context: Context
     ) {
+        configure(control)
+    }
+
+    static func dismantleNSView(_ control: ShortcutRecorderControl, coordinator: ()) {
+        control.cancelCapture()
+    }
+
+    private func configure(_ control: ShortcutRecorderControl) {
+        if control.shortcut != shortcut || !environmentIsEnabled {
+            control.cancelCapture()
+        }
         control.onCandidate = onCandidate
+        control.onCaptureChanged = onCaptureChanged
         control.shortcut = shortcut
+        control.shortcutAccessibilityLabel = accessibilityLabel
         control.isEnabled = environmentIsEnabled
         control.refreshTitle()
         control.refreshAccessibility()
@@ -29,8 +42,10 @@ struct ShortcutRecorder: NSViewRepresentable {
 }
 
 final class ShortcutRecorderControl: NSButton {
-    var shortcut = GlobalShortcut.defaultShortcut
+    var shortcut: GlobalShortcut?
+    var shortcutAccessibilityLabel = "Dictation shortcut"
     var onCandidate: ((GlobalShortcut) -> Void)?
+    var onCaptureChanged: ((ObjectIdentifier, ((GlobalShortcut) -> Void)?) -> Void)?
 
     private var isRecording = false
 
@@ -61,12 +76,16 @@ final class ShortcutRecorderControl: NSButton {
 
     @objc
     private func beginRecording() {
-        guard isEnabled else {
+        guard isEnabled, window?.isKeyWindow == true,
+            window?.makeFirstResponder(self) == true
+        else {
             return
         }
 
-        window?.makeFirstResponder(self)
         isRecording = true
+        onCaptureChanged?(ObjectIdentifier(self)) { [weak self] candidate in
+            self?.acceptCandidate(candidate)
+        }
         refreshTitle()
         refreshAccessibility()
     }
@@ -78,7 +97,7 @@ final class ShortcutRecorderControl: NSButton {
         }
 
         if event.keyCode == UInt16(kVK_Escape) {
-            finishRecording()
+            cancelCapture()
             return
         }
 
@@ -97,14 +116,34 @@ final class ShortcutRecorderControl: NSButton {
             modifiers: modifiers
         )
 
-        finishRecording()
-        onCandidate?(candidate)
+        acceptCandidate(candidate)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if window !== newWindow {
+            cancelCapture()
+            let notifications = NotificationCenter.default
+            for name in [NSWindow.didResignKeyNotification, NSWindow.willCloseNotification] {
+                if let window {
+                    notifications.removeObserver(self, name: name, object: window)
+                }
+                if let newWindow {
+                    notifications.addObserver(
+                        self,
+                        selector: #selector(windowDidEndCapture(_:)),
+                        name: name,
+                        object: newWindow
+                    )
+                }
+            }
+        }
+        super.viewWillMove(toWindow: newWindow)
     }
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
         if resigned {
-            finishRecording()
+            cancelCapture()
         }
         return resigned
     }
@@ -112,15 +151,15 @@ final class ShortcutRecorderControl: NSButton {
     func refreshTitle() {
         title = isRecording
             ? "Press shortcut…"
-            : shortcut.displayName
+            : shortcut?.displayName ?? "Set Shortcut"
     }
 
     func refreshAccessibility() {
-        setAccessibilityLabel("Global dictation shortcut")
+        setAccessibilityLabel(shortcutAccessibilityLabel)
         setAccessibilityValue(
             isRecording
                 ? "Waiting for a shortcut"
-                : shortcut.displayName
+                : shortcut?.displayName ?? "Disabled"
         )
         setAccessibilityHelp(
             isRecording
@@ -129,10 +168,28 @@ final class ShortcutRecorderControl: NSButton {
         )
     }
 
-    private func finishRecording() {
+    func cancelCapture() {
+        guard isRecording else {
+            return
+        }
         isRecording = false
+        onCaptureChanged?(ObjectIdentifier(self), nil)
         refreshTitle()
         refreshAccessibility()
+    }
+
+    private func acceptCandidate(_ candidate: GlobalShortcut) {
+        guard isRecording, isEnabled, window?.isKeyWindow == true else {
+            cancelCapture()
+            return
+        }
+        cancelCapture()
+        onCandidate?(candidate)
+    }
+
+    @objc
+    private func windowDidEndCapture(_: Notification) {
+        cancelCapture()
     }
 
     private static func carbonModifiers(

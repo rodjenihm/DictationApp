@@ -25,11 +25,12 @@ on the Mac. The UI must make each upload boundary clear.
 
 ## Core workflow
 
-1. User presses the global keyboard shortcut to start dictation.
+1. User presses the toggle or hold shortcut to start dictation.
 2. App records microphone audio and shows a non-activating recording indicator.
 3. User may move the cursor or switch applications while dictating.
 4. While recording, the user either:
-   - Presses the same global keyboard shortcut to stop dictation and continue to transcription.
+   - Presses the toggle shortcut again, releases the hold shortcut, or selects
+     Stop to continue to transcription.
    - Cancels the recording and returns directly to idle.
 5. The configured transcription provider produces a raw transcript.
 6. If enabled, the configured post-processing provider cleans and formats the raw transcript.
@@ -92,19 +93,21 @@ Insertion boundary behavior:
 
 ## Shortcut behavior
 
-The initial version uses a toggle interaction:
-
-- Use Option–Space as the default global shortcut.
-- Press the configured global shortcut while idle to start recording.
-- Press the same shortcut while recording to stop recording and begin transcription.
+- Use Option–Space as the default toggle shortcut. Press once to start,
+  then press again to stop and transcribe.
+- Use Control–Shift–Space as the default hold shortcut. Press the chord to
+  start, then release Space to stop and transcribe.
 - Ignore additional shortcut presses while transcribing, post-processing, or inserting.
 - Provide an equivalent Stop action through the menu-bar UI while recording.
 - Keep Cancel available through Escape, the overlay, and the menu-bar UI throughout an active session.
-- Keep the shortcut configurable in Settings.
-- Reject shortcuts reserved by macOS.
-- If shortcut registration fails, show an actionable conflict message and keep the previous valid shortcut.
+- Configure both shortcuts or disable hold to dictate in Settings.
+- Reject duplicate shortcuts and shortcuts reserved by macOS.
+- If a shortcut change fails to register, show an actionable conflict message
+  and keep the previous active shortcuts.
 
-The shortcut interaction must be modeled independently from audio capture so additional interaction modes can be introduced later without changing the recording or transcription pipeline.
+Both interactions use the same recording and transcription pipeline. See
+the [hold-to-dictate feature specification](features/16-hold-to-dictate.md)
+for release behavior and upgrades.
 
 ## Transcription providers
 

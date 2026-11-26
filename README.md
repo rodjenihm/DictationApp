@@ -10,7 +10,7 @@ This project is developed through a specification-driven, AI-assisted engineerin
 ## Features
 
 - Full native Settings window with General, Transcription, Post-processing, and Providers destinations
-- Global keyboard shortcut with transactional Save and rollback behavior
+- Configurable global shortcuts for toggle and hold-to-dictate recording
 - Preferred microphone selection with automatic System Default fallback
 - Native, non-activating recording overlay
 - Provider and model selection for transcription
@@ -66,11 +66,14 @@ DictationApp runs in the menu bar and does not appear in the Dock.
 
 ## Usage
 
-The default global shortcut is **Option–Space**:
+Use either global shortcut to dictate.
 
-- Press once to start recording.
-- Press again to stop and transcribe.
+- Press **Option–Space** to start. Press it again to stop and transcribe.
+- Hold **Control–Shift–Space** for a short dictation. Release **Space** to stop and transcribe.
 - Press **Escape** to cancel an active session.
+
+Change either shortcut or disable hold to dictate in **Settings → General**,
+then select **Save Changes**.
 
 After transcription, the app inserts the text at the currently focused cursor. If insertion fails or cannot be confirmed, the transcript remains on the clipboard for manual paste.
 
