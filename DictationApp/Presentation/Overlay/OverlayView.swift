@@ -9,6 +9,7 @@ struct OverlayView: View {
     let onTranscribePartial: () -> Void
     let onRepairTranscription: () -> Void
     let onDismiss: () -> Void
+    let onCopyCommandResult: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
@@ -142,6 +143,8 @@ struct OverlayView: View {
             .completed,
             .transcribing,
             .postProcessing,
+            .commandListening,
+            .commandWorking,
             .inserting,
             .tooShort:
             compactCancelButton.fixedSize()
@@ -152,6 +155,7 @@ struct OverlayView: View {
             .cancelled,
             .insertionUnverified,
             .clipboardFallback,
+            .commandFeedback,
             .transcriptionFailed,
             .captureFailed,
             .failed:
@@ -174,16 +178,20 @@ struct OverlayView: View {
     }
 
     private var compactCancelButton: some View {
-        Button(role: .cancel, action: onCancel) {
-            Label("Cancel dictation", systemImage: "xmark")
+        let title = switch state {
+        case .commandListening, .commandWorking: "Cancel command"
+        default: "Cancel dictation"
+        }
+        return Button(role: .cancel, action: onCancel) {
+            Label(title, systemImage: "xmark")
                 .labelStyle(.iconOnly)
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.circle)
         .controlSize(.small)
         .focusable(false)
-        .accessibilityLabel("Cancel dictation")
-        .help("Cancel dictation")
+        .accessibilityLabel(title)
+        .help(title)
     }
 
     @ViewBuilder
@@ -231,6 +239,15 @@ struct OverlayView: View {
             Button("Dismiss", action: onDismiss)
                 .buttonStyle(.bordered)
                 .focusable(false)
+        case .commandFeedback(_, let canCopyResult):
+            if canCopyResult {
+                Button("Copy Result", action: onCopyCommandResult)
+                    .buttonStyle(.borderedProminent)
+                    .focusable(false)
+            }
+            Button("Dismiss", action: onDismiss)
+                .buttonStyle(.bordered)
+                .focusable(false)
         case .failed:
             Button("Cancel", role: .cancel, action: onCancel)
                 .buttonStyle(.bordered)
@@ -242,6 +259,8 @@ struct OverlayView: View {
             .completed,
             .transcribing,
             .postProcessing,
+            .commandListening,
+            .commandWorking,
             .inserting,
             .inserted,
             .rawTranscriptFallback,
@@ -255,7 +274,7 @@ struct OverlayView: View {
     @ViewBuilder
     private var stateIndicator: some View {
         switch state {
-        case .recording:
+        case .recording, .commandListening:
             ZStack {
                 Circle()
                     .fill(.red.opacity(0.16))
@@ -273,7 +292,8 @@ struct OverlayView: View {
         case
             .rawTranscriptFallback,
             .insertionUnverified,
-            .clipboardFallback:
+            .clipboardFallback,
+            .commandFeedback:
             Image(systemName: "text.badge.exclamationmark")
                 .foregroundStyle(.orange)
                 .font(.body)
@@ -302,6 +322,7 @@ struct OverlayView: View {
             .finalizing,
             .transcribing,
             .postProcessing,
+            .commandWorking,
             .inserting:
             ProgressView()
                 .controlSize(.mini)
@@ -314,6 +335,7 @@ struct OverlayView: View {
         case
             .insertionUnverified,
             .clipboardFallback,
+            .commandFeedback,
             .transcriptionFailed,
             .captureFailed,
             .failed:
@@ -325,6 +347,8 @@ struct OverlayView: View {
             .completed,
             .transcribing,
             .postProcessing,
+            .commandListening,
+            .commandWorking,
             .inserting,
             .inserted,
             .rawTranscriptFallback,
@@ -366,6 +390,10 @@ struct OverlayView: View {
             "Transcribing…"
         case .postProcessing:
             "Cleaning up…"
+        case .commandListening(let elapsed):
+            "Listening for command… · \(formatDuration(elapsed))"
+        case .commandWorking(let message):
+            message
         case .inserting:
             "Inserting…"
         case .inserted:
@@ -381,6 +409,7 @@ struct OverlayView: View {
         case
             .insertionUnverified,
             .clipboardFallback,
+            .commandFeedback,
             .transcriptionFailed,
             .captureFailed,
             .failed:
@@ -429,6 +458,10 @@ struct OverlayView: View {
             "Transcribing recording…"
         case .postProcessing:
             "Cleaning up transcript…"
+        case .commandListening, .commandWorking:
+            compactTitle
+        case .commandFeedback(_, let canCopyResult):
+            canCopyResult ? "Command result available" : "Command Mode"
         case .inserting:
             "Inserting transcript…"
         case .inserted:
@@ -466,6 +499,8 @@ struct OverlayView: View {
             message
         case .failed(let message):
             message
+        case .commandFeedback(let message, _):
+            message
         case
             .preparing,
             .recording,
@@ -473,6 +508,8 @@ struct OverlayView: View {
             .completed,
             .transcribing,
             .postProcessing,
+            .commandListening,
+            .commandWorking,
             .inserting,
             .inserted,
             .rawTranscriptFallback,

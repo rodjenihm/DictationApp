@@ -1,10 +1,66 @@
+import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import Foundation
 import OSLog
 
 @MainActor
-final class AccessibilityTextInsertionService: TextInsertionServicing {
+protocol EditableSelectionReplacing {
+    func captureEditableSelection() throws -> EditableSelection
+
+    func replaceSelection(
+        _ selection: EditableSelection,
+        with text: String,
+        using clipboardService: any TranscriptClipboardServicing,
+        sessionID: UUID
+    ) async -> SelectionReplacementOutcome
+}
+
+@MainActor
+struct EditableSelection {
+    let text: String
+    fileprivate let element: AXUIElement
+    fileprivate let window: AXUIElement
+    fileprivate let processIdentifier: pid_t
+    fileprivate let range: NSRange
+
+    fileprivate func matches(_ other: EditableSelection) -> Bool {
+        processIdentifier == other.processIdentifier
+            && CFEqual(window, other.window)
+            && CFEqual(element, other.element)
+            && range == other.range
+            && text.utf16.elementsEqual(other.text.utf16)
+    }
+}
+
+enum SelectionReplacementOutcome {
+    case confirmed
+    case unverified
+    case selectionChanged
+    case failed
+}
+
+private enum EditableSelectionError: LocalizedError {
+    case accessibilityUnavailable
+    case noEditableSelection
+    case selectionUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .accessibilityUnavailable:
+            "Allow Accessibility access to use Command Mode."
+        case .noEditableSelection:
+            "Select text in an editable field first."
+        case .selectionUnavailable:
+            "Couldn’t read the selection in this editor."
+        }
+    }
+}
+
+@MainActor
+final class AccessibilityTextInsertionService: TextInsertionServicing,
+    EditableSelectionReplacing
+{
     private let clock = ContinuousClock()
     private let messagingTimeout: Float = 1
     private let pasteConsumptionDelay = Duration.milliseconds(200)
@@ -151,7 +207,145 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         return .unverified
     }
 
+    func captureEditableSelection() throws -> EditableSelection {
+        guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else {
+            throw EditableSelectionError.accessibilityUnavailable
+        }
+
+        do {
+            let element = try focusedElement()
+            var processIdentifier: pid_t = 0
+            guard
+                AXUIElementGetPid(element, &processIdentifier) == .success,
+                processIdentifier > 0,
+                try isEditableCommandTarget(element),
+                let range = try selectedTextRange(from: element),
+                range.length > 0
+            else {
+                throw EditableSelectionError.noEditableSelection
+            }
+
+            let ranges = try attributeValue(
+                kAXSelectedTextRangesAttribute,
+                from: element
+            ) as? [AnyObject]
+            guard (ranges?.count ?? 1) <= 1 else {
+                throw EditableSelectionError.selectionUnavailable
+            }
+
+            let application = AXUIElementCreateApplication(processIdentifier)
+            guard
+                let window = try elementAttribute(kAXWindowAttribute, from: element)
+                    ?? elementAttribute(kAXFocusedWindowAttribute, from: application),
+                let text = try stringAttribute(kAXSelectedTextAttribute, from: element)
+                    ?? stringForRange(range, from: element),
+                text.utf16.count == range.length,
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                NSWorkspace.shared.frontmostApplication?.processIdentifier == processIdentifier
+            else {
+                throw EditableSelectionError.selectionUnavailable
+            }
+
+            return EditableSelection(
+                text: text,
+                element: element,
+                window: window,
+                processIdentifier: processIdentifier,
+                range: range
+            )
+        } catch TargetProbeFailure.unavailable {
+            throw EditableSelectionError.noEditableSelection
+        } catch TargetProbeFailure.messagingFailed {
+            throw EditableSelectionError.selectionUnavailable
+        }
+    }
+
+    func replaceSelection(
+        _ selection: EditableSelection,
+        with text: String,
+        using clipboardService: any TranscriptClipboardServicing,
+        sessionID: UUID
+    ) async -> SelectionReplacementOutcome {
+        guard
+            let current = try? captureEditableSelection(),
+            selection.matches(current)
+        else {
+            return .selectionChanged
+        }
+
+        let target = Target(
+            element: current.element,
+            value: try? stringAttribute(kAXValueAttribute, from: current.element),
+            selectedRange: current.range
+        )
+        guard !Task.isCancelled else {
+            return .failed
+        }
+        let transaction = clipboardService.beginTransaction(
+            replacingContentsWith: text,
+            sessionID: sessionID
+        )
+        defer { transaction.restoreIfOwned() }
+
+        // Materializing clipboard data can take time. Recheck the selection
+        // after acquiring the clipboard and before dispatching to the app.
+        guard
+            let latest = try? captureEditableSelection(),
+            selection.matches(latest)
+        else {
+            return .selectionChanged
+        }
+        guard
+            !Task.isCancelled,
+            transaction.isStillOwned,
+            postPasteShortcut(to: latest.element)
+        else {
+            return .failed
+        }
+
+        transaction.holdRestoration(for: clipboardHoldDuration)
+        let dispatchedAt = clock.now
+        defer {
+            AppLog.recordLatency(
+                "command_replacement_verification",
+                since: dispatchedAt,
+                sessionID: sessionID
+            )
+        }
+        do {
+            let confirmed = try await confirmInsertion(
+                target: target,
+                insertedText: text,
+                requiresTextReadback: true
+            )
+            return confirmed ? .confirmed : .unverified
+        } catch is CancellationError {
+            return .failed
+        } catch {
+            return .unverified
+        }
+    }
+
     private func prepareTarget() throws -> Target {
+        let element = try focusedElement()
+        guard try isSelectedTextSettable(on: element) else {
+            AppLog.insertion.notice(
+                "Insertion unavailable because focused text is not writable"
+            )
+            throw TargetProbeFailure.unavailable
+        }
+
+        guard let selectedRange = try selectedTextRange(from: element) else {
+            return Target(element: element, value: nil, selectedRange: nil)
+        }
+        return Target(
+            element: element,
+            value: try targetValue(from: element),
+            selectedRange: selectedRange
+        )
+    }
+
+    private func focusedElement() throws -> AXUIElement {
         try Task.checkCancellation()
         guard AXIsProcessTrusted() else {
             AppLog.insertion.notice(
@@ -171,19 +365,36 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         }
 
         guard
-            let focusedElement = try attributeValue(
+            let focusedElement = try elementAttribute(
                 kAXFocusedUIElementAttribute,
                 from: systemWideElement
-            ),
-            CFGetTypeID(focusedElement) == AXUIElementGetTypeID()
+            )
         else {
             AppLog.insertion.notice(
                 "Insertion unavailable because no focused element exists"
             )
             throw TargetProbeFailure.unavailable
         }
-        let element = unsafeBitCast(focusedElement, to: AXUIElement.self)
+        return focusedElement
+    }
 
+    private func isEditableCommandTarget(_ element: AXUIElement) throws -> Bool {
+        let protectedContentAttribute = NSAccessibility.Attribute.containsProtectedContent
+        guard
+            try stringAttribute(kAXSubroleAttribute, from: element) != kAXSecureTextFieldSubrole as String,
+            try attributeValue(protectedContentAttribute.rawValue, from: element) as? Bool != true,
+            try attributeValue(kAXEnabledAttribute, from: element) as? Bool != false
+        else {
+            return false
+        }
+
+        if let isEditable = try attributeValue(kAXIsEditableAttribute, from: element) as? Bool {
+            return isEditable
+        }
+        return try isSelectedTextSettable(on: element)
+    }
+
+    private func isSelectedTextSettable(on element: AXUIElement) throws -> Bool {
         try Task.checkCancellation()
         var isSettable = DarwinBoolean(false)
         let settableResult = AXUIElementIsAttributeSettable(
@@ -191,21 +402,7 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             kAXSelectedTextAttribute as CFString,
             &isSettable
         )
-        guard try isSuccessful(settableResult), isSettable.boolValue else {
-            AppLog.insertion.notice(
-                "Insertion unavailable because focused text is not writable"
-            )
-            throw TargetProbeFailure.unavailable
-        }
-
-        guard let selectedRange = try selectedTextRange(from: element) else {
-            return Target(element: element, value: nil, selectedRange: nil)
-        }
-        return Target(
-            element: element,
-            value: try targetValue(from: element),
-            selectedRange: selectedRange
-        )
+        return try isSuccessful(settableResult) && isSettable.boolValue
     }
 
     private func targetValue(from element: AXUIElement) throws -> String? {
@@ -284,7 +481,8 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
 
     private func confirmInsertion(
         target: Target,
-        insertedText: String
+        insertedText: String,
+        requiresTextReadback: Bool = false
     ) async throws -> Bool {
         guard let selectedRange = target.selectedRange else {
             return false
@@ -310,17 +508,20 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
                         kAXValueAttribute,
                         from: target.element
                     ),
-                    expectedValue: expectedValue
+                    expectedValue: expectedValue,
+                    requiresExactText: requiresTextReadback
                 )
             {
                 return true
             }
 
             if let insertedRange {
-                if valuesMatchForVerification(
+                let matchesInsertedText = valuesMatchForVerification(
                     try stringForRange(insertedRange, from: target.element),
-                    expectedValue: insertedText
-                ) {
+                    expectedValue: insertedText,
+                    requiresExactText: requiresTextReadback
+                )
+                if matchesInsertedText, !requiresTextReadback {
                     AppLog.insertion.info(
                         "Insertion confirmed from inserted-range readback"
                     )
@@ -328,13 +529,12 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
                 }
 
                 if
+                    !requiresTextReadback || matchesInsertedText,
                     let actualRange = try selectedTextRange(from: target.element),
                     actualRange.length == 0,
                     actualRange.location == NSMaxRange(insertedRange)
                 {
-                    AppLog.insertion.info(
-                        "Insertion confirmed from caret advancement"
-                    )
+                    AppLog.insertion.info("Insertion confirmed from caret advancement")
                     return true
                 }
             }
@@ -368,10 +568,15 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
 
     private func valuesMatchForVerification(
         _ actualValue: String?,
-        expectedValue: String
+        expectedValue: String,
+        requiresExactText: Bool
     ) -> Bool {
         guard let actualValue else {
             return false
+        }
+
+        if requiresExactText {
+            return actualValue.utf16.elementsEqual(expectedValue.utf16)
         }
 
         if actualValue == expectedValue {
@@ -405,6 +610,19 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
         from element: AXUIElement
     ) throws -> String? {
         try attributeValue(attribute, from: element) as? String
+    }
+
+    private func elementAttribute(
+        _ attribute: String,
+        from element: AXUIElement
+    ) throws -> AXUIElement? {
+        guard
+            let value = try attributeValue(attribute, from: element),
+            CFGetTypeID(value) == AXUIElementGetTypeID()
+        else {
+            return nil
+        }
+        return unsafeBitCast(value, to: AXUIElement.self)
     }
 
     private func containsStaticText(
@@ -492,7 +710,8 @@ final class AccessibilityTextInsertionService: TextInsertionServicing {
             AXValueGetValue(axValue, .cfRange, &range),
             range.location >= 0,
             range.location != NSNotFound,
-            range.length >= 0
+            range.length >= 0,
+            range.length <= Int.max - range.location
         else {
             return nil
         }

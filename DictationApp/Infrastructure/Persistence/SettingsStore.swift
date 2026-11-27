@@ -5,6 +5,7 @@ struct StoredSettings {
     var hasCompletedFirstRun: Bool
     var globalShortcut: GlobalShortcut
     var holdShortcut: GlobalShortcut?
+    var commandShortcut: GlobalShortcut?
     var soundCuesEnabled: Bool
     var lastSettingsDestination: String
 }
@@ -16,6 +17,7 @@ final class SettingsStore {
         static let hasCompletedFirstRun = "v1.hasCompletedFirstRun"
         static let globalShortcut = "v1.globalShortcut"
         static let holdShortcut = "v1.holdShortcut"
+        static let commandShortcut = "v1.commandShortcut"
         static let soundCuesEnabled = "v1.soundCuesEnabled"
         static let lastSettingsDestination = "v1.lastSettingsDestination"
     }
@@ -41,13 +43,15 @@ final class SettingsStore {
         }
 
         let globalShortcut = loadGlobalShortcut()
+        let holdShortcut = loadHoldShortcut(toggle: globalShortcut)
         return StoredSettings(
             configuration: configuration,
             hasCompletedFirstRun: defaults.bool(
                 forKey: Key.hasCompletedFirstRun
             ),
             globalShortcut: globalShortcut,
-            holdShortcut: loadHoldShortcut(toggle: globalShortcut),
+            holdShortcut: holdShortcut,
+            commandShortcut: loadCommandShortcut(toggle: globalShortcut, hold: holdShortcut),
             soundCuesEnabled: loadSoundCuesEnabled(),
             lastSettingsDestination:
                 defaults.string(forKey: Key.lastSettingsDestination)
@@ -60,14 +64,17 @@ final class SettingsStore {
         hasCompletedFirstRun: Bool,
         soundCuesEnabled: Bool,
         globalShortcut: GlobalShortcut,
-        holdShortcut: GlobalShortcut?
+        holdShortcut: GlobalShortcut?,
+        commandShortcut: GlobalShortcut?
     ) throws {
         let configurationData = try encoder.encode(configuration)
         let shortcutData = try encoder.encode(globalShortcut)
         let holdShortcutData = try encoder.encode(holdShortcut)
+        let commandShortcutData = try encoder.encode(commandShortcut)
         defaults.set(configurationData, forKey: Key.configuration)
         defaults.set(shortcutData, forKey: Key.globalShortcut)
         defaults.set(holdShortcutData, forKey: Key.holdShortcut)
+        defaults.set(commandShortcutData, forKey: Key.commandShortcut)
         defaults.set(
             hasCompletedFirstRun,
             forKey: Key.hasCompletedFirstRun
@@ -115,5 +122,22 @@ final class SettingsStore {
         }
 
         return defaults.bool(forKey: Key.soundCuesEnabled)
+    }
+
+    private func loadCommandShortcut(
+        toggle: GlobalShortcut,
+        hold: GlobalShortcut?
+    ) -> GlobalShortcut? {
+        let shortcut: GlobalShortcut?
+        if let data = defaults.data(forKey: Key.commandShortcut) {
+            shortcut = try? decoder.decode(GlobalShortcut?.self, from: data)
+        } else {
+            shortcut = .defaultCommandShortcut
+        }
+
+        guard let shortcut, shortcut.isCommandConfigurable, shortcut != toggle, shortcut != hold else {
+            return nil
+        }
+        return shortcut
     }
 }

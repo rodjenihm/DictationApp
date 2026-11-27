@@ -17,6 +17,7 @@ final class OpenAIProviderSettingsModule:
     private let credentialStore: any CredentialStore
     private let validator: any OpenAIConfigurationValidating
     private let runtimeHealth: ProviderRuntimeHealthStore
+    private var committedCredentialChange = false
 
     init(
         credentialStore: any CredentialStore,
@@ -221,10 +222,7 @@ final class OpenAIProviderSettingsModule:
             }
         }
 
-        if
-            effectiveStages.contains(.postProcessing),
-            configuration.postProcessingMode == .enabled
-        {
+        if effectiveStages.contains(.postProcessing) {
             do {
                 try await validator.validatePostProcessing(
                     credential: credential,
@@ -252,14 +250,23 @@ final class OpenAIProviderSettingsModule:
         case .unchanged:
             return nil
         case .replace:
-            try credentialStore.replaceCredential(with: trimmedCandidate)
+            let candidate = trimmedCandidate
+            guard previous != candidate else {
+                return nil
+            }
+            try credentialStore.replaceCredential(with: candidate)
         case .remove:
+            guard previous != nil else {
+                return nil
+            }
             try credentialStore.deleteCredential()
         }
+        committedCredentialChange = true
         return ProviderCommitToken(value: previous as Any)
     }
 
     func rollback(_ token: ProviderCommitToken) {
+        committedCredentialChange = false
         let previous = token.value as? String
         if let previous {
             try? credentialStore.replaceCredential(with: previous)
@@ -269,6 +276,10 @@ final class OpenAIProviderSettingsModule:
     }
 
     func didSave() {
+        if committedCredentialChange {
+            committedCredentialChange = false
+            runtimeHealth.clearAfterCredentialChange(for: .openAI)
+        }
         reload()
     }
 

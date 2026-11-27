@@ -21,6 +21,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appModel.applicationDidBecomeActive()
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        appModel.stop()
+        guard appModel.hasPendingClipboardRestoration else {
+            return .terminateNow
+        }
+        Task {
+            await appModel.finishPendingClipboardRestoration()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         AppLog.lifecycle.notice("Application will terminate")
         appModel.stop()

@@ -105,7 +105,7 @@ struct ConfigurationGeneralView: View {
                 statusTitle: accessibilityStatusTitle,
                 granted: viewModel.accessibilityStatus == .granted,
                 detail:
-                    "Enables automatic insertion and Fn shortcuts. Clipboard delivery remains available without it."
+                    "Enables automatic insertion, Command Mode, and Fn shortcuts. Clipboard delivery remains available without it."
             ) {
                 accessibilityAction
             }
@@ -272,6 +272,56 @@ struct ConfigurationGeneralView: View {
                 }
             }
 
+            ConfigurationSettingRow("Command Mode") {
+                ShortcutRecorder(
+                    shortcut: viewModel.commandShortcut,
+                    accessibilityLabel: "Command Mode shortcut",
+                    allowsCommandModifiers: true,
+                    onCandidate: { viewModel.updateCommandShortcut($0) },
+                    onCaptureChanged: viewModel.setShortcutCapture
+                )
+                .configurationFieldControl()
+            } detail: {
+                Text(
+                    viewModel.commandShortcut == nil
+                        ? "Disabled. Set a shortcut to use spoken commands."
+                        : "Select editable text, hold the shortcut to speak an instruction, then release to apply it."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if viewModel.commandShortcut != .commandControlOption {
+                ConfigurationFormSupplementary {
+                    Button("Use Control–Option–Command") {
+                        viewModel.updateCommandShortcut(.commandControlOption)
+                    }
+                }
+            }
+
+            if viewModel.commandShortcut != .defaultCommandShortcut {
+                ConfigurationFormSupplementary {
+                    Button("Use Default Command Shortcut") {
+                        viewModel.updateCommandShortcut(.defaultCommandShortcut)
+                    }
+                }
+            }
+
+            if viewModel.commandShortcut != nil {
+                ConfigurationFormSupplementary {
+                    Button("Disable Command Shortcut") {
+                        viewModel.updateCommandShortcut(nil)
+                    }
+                }
+            }
+
+            if let message = viewModel.commandShortcutAvailabilityMessage {
+                ConfigurationFormSupplementary {
+                    ConfigurationIssueLabel(message: message)
+                }
+            }
+
             if let message = viewModel.shortcutErrorMessage {
                 ConfigurationFormSupplementary {
                     ConfigurationIssueLabel(message: message)
@@ -316,8 +366,17 @@ struct ConfigurationGeneralView: View {
                 )
             } else {
                 Label(
-                    "Post-processing is disabled; raw transcripts are not sent for cleanup.",
+                    "Dictation pastes raw transcripts while automatic cleanup is off.",
                     systemImage: "text.badge.xmark"
+                )
+            }
+            if viewModel.commandShortcut != nil {
+                ConfigurationStageDisclosure(
+                    viewModel: viewModel,
+                    provider: viewModel.postProcessingProviderChoice,
+                    capability: .postProcessing,
+                    compact: false,
+                    forCommand: true
                 )
             }
             Label(

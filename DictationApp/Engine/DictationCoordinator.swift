@@ -15,6 +15,7 @@ final class DictationCoordinator: ObservableObject {
         ProviderRuntimeHealthStore
     private let clipboardService: any TranscriptClipboardServicing
     private let textInsertionService: any TextInsertionServicing
+    private let selectionReplacer: any EditableSelectionReplacing
     private let clock = ContinuousClock()
 
     private var currentToken: SessionToken?
@@ -27,6 +28,8 @@ final class DictationCoordinator: ObservableObject {
     private var activeClipboardTransaction:
         (any ClipboardTransactionHandling)?
     private var activeTextPayload: SessionTextPayload?
+    private var commandSelection: EditableSelection?
+    private var commandResult: String?
     private var pendingCancellationCue:
         (sessionIdentifier: UUID, enabled: Bool)?
     private var stopRequestedAt: ContinuousClock.Instant?
@@ -39,7 +42,8 @@ final class DictationCoordinator: ObservableObject {
         providerResolver: any ProviderRuntimeResolving,
         providerRuntimeHealth: ProviderRuntimeHealthStore,
         clipboardService: any TranscriptClipboardServicing,
-        textInsertionService: any TextInsertionServicing
+        textInsertionService: any TextInsertionServicing,
+        selectionReplacer: any EditableSelectionReplacing
     ) {
         self.recorder = recorder
         self.soundCuePlayer = soundCuePlayer
@@ -49,6 +53,7 @@ final class DictationCoordinator: ObservableObject {
         self.providerRuntimeHealth = providerRuntimeHealth
         self.clipboardService = clipboardService
         self.textInsertionService = textInsertionService
+        self.selectionReplacer = selectionReplacer
 
         self.recorder.onUnexpectedCaptureFailure = {
             [weak self] identifier, outcome in
@@ -67,8 +72,10 @@ final class DictationCoordinator: ObservableObject {
 
     var acceptsToggle: Bool {
         switch state {
-        case .idle, .recording, .rawTranscriptFallback:
+        case .idle, .rawTranscriptFallback, .commandFeedback:
             true
+        case .recording:
+            !isCommandSession
         case
             .preparing,
             .finalizing,
@@ -97,6 +104,7 @@ final class DictationCoordinator: ObservableObject {
             .insertionUnverified,
             .clipboardFallback,
             .rawTranscriptFallback,
+            .commandFeedback,
             .noSpeech:
             false
         case
@@ -116,6 +124,8 @@ final class DictationCoordinator: ObservableObject {
         }
     }
 
+    var isCommandSession: Bool { commandSelection != nil }
+
     var transcriptionRepairContext: TranscriptionRepairContext? {
         guard let failedSessionContext else {
             return nil
@@ -131,6 +141,7 @@ final class DictationCoordinator: ObservableObject {
     func start(
         configuration: SessionConfiguration,
         soundCuesEnabled: Bool,
+        commandSelection: EditableSelection? = nil,
         receivedAt: ContinuousClock.Instant = .now
     ) {
         guard state == .idle, currentToken == nil else {
@@ -151,6 +162,7 @@ final class DictationCoordinator: ObservableObject {
         failedSessionContext = nil
         activeClipboardTransaction = nil
         activeTextPayload = SessionTextPayload()
+        self.commandSelection = commandSelection
         stopRequestedAt = nil
         let acceptedAt = clock.now
         AppLog.recordLatency(
@@ -231,10 +243,40 @@ final class DictationCoordinator: ObservableObject {
 
     func dismissDeliveryStatus() {
         switch state {
-        case .insertionUnverified, .clipboardFallback, .rawTranscriptFallback:
+        case .insertionUnverified, .clipboardFallback,
+             .rawTranscriptFallback, .commandFeedback:
             completeCurrentSessionWithoutCue()
         default:
             return
+        }
+    }
+
+    func copyableCommandResult() -> String? {
+        guard case .commandFeedback(_, true) = state else {
+            return nil
+        }
+        return commandResult
+    }
+
+    func showCommandRejection(_ message: String) {
+        guard state == .idle, currentToken == nil else {
+            return
+        }
+        let token = SessionToken()
+        currentToken = token
+        guard transition(
+            to: .commandFeedback(message: message, canCopyResult: false),
+            token: token
+        ) else {
+            resetSessionWithoutCue()
+            return
+        }
+        pipelineTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            try? await sleep(for: TerminalDisplayDuration.commandFeedback, token: token)
+            completeCurrentSession(token: token)
         }
     }
 
@@ -344,10 +386,24 @@ final class DictationCoordinator: ObservableObject {
                 eventContinuation: eventContinuation,
                 activeSession: activeSession
             )
-            try requireCurrent(token)
+            do {
+                try requireCurrent(token)
+            } catch {
+                deletePartialArtifact(in: recordingEvent)
+                throw error
+            }
 
             let capturedSession: CapturedSessionResult
             switch recordingEvent {
+            case .stop(.automaticLimit) where isCommandSession:
+                liveSession?.cancel()
+                await recorder.cancelRecording(sessionIdentifier: token.id)
+                try await presentCommandFeedback(
+                    "Command recording reached the duration limit.",
+                    token: token
+                )
+                completeCurrentSession(token: token)
+                return
             case .stop(let reason):
                 capturedSession = try await finalizeRecording(
                     activeSession,
@@ -355,6 +411,15 @@ final class DictationCoordinator: ObservableObject {
                 )
             case .unexpectedCapture(let outcome):
                 liveSession?.cancel()
+                if isCommandSession {
+                    deletePartialArtifact(in: recordingEvent)
+                    try await presentCommandFeedback(
+                        "The microphone became unavailable. Try the command again.",
+                        token: token
+                    )
+                    completeCurrentSession(token: token)
+                    return
+                }
                 capturedSession = try await handleUnexpectedCapture(
                     outcome,
                     activeSession: activeSession
@@ -405,11 +470,18 @@ final class DictationCoordinator: ObservableObject {
                 return
             }
 
-            await presentCaptureFailure(
-                map(error),
-                token: token,
-                soundCuesEnabled: soundCuesEnabled
-            )
+            if isCommandSession {
+                try? await presentCommandFeedback(
+                    map(error).localizedDescription,
+                    token: token
+                )
+            } else {
+                await presentCaptureFailure(
+                    map(error),
+                    token: token,
+                    soundCuesEnabled: soundCuesEnabled
+                )
+            }
             completeCurrentSession(token: token)
         }
     }
@@ -678,6 +750,13 @@ final class DictationCoordinator: ObservableObject {
                 )
                 return
             } catch is CancellationError {
+                if isCommandSession {
+                    try await presentCommandFeedback(
+                        "The command transcription was interrupted.",
+                        token: token
+                    )
+                    return
+                }
                 throw CancellationError()
             } catch let failure as ProviderOperationFailure {
                 let presentedFailure: ProviderOperationFailure =
@@ -688,6 +767,14 @@ final class DictationCoordinator: ObservableObject {
                     )
                     : failure
 
+                if isCommandSession {
+                    try await presentCommandFeedback(
+                        presentedFailure.errorDescription
+                            ?? "The command instruction could not be transcribed.",
+                        token: token
+                    )
+                    return
+                }
                 try await presentTranscriptionFailure(
                     presentedFailure,
                     session: session,
@@ -701,6 +788,13 @@ final class DictationCoordinator: ObservableObject {
                     token: token
                 )
             } catch {
+                if isCommandSession {
+                    try await presentCommandFeedback(
+                        "The command instruction could not be transcribed.",
+                        token: token
+                    )
+                    return
+                }
                 let failure = ProviderOperationFailure.operation(
                     message:
                         "The recording could not be transcribed."
@@ -788,8 +882,6 @@ final class DictationCoordinator: ObservableObject {
         let normalizedTranscript = transcript.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        activeTextPayload?.rawTranscript = normalizedTranscript
-
         if normalizedTranscript.isEmpty {
             AppLog.session.info("Transcription produced no speech")
             guard transition(to: .noSpeech, token: token) else {
@@ -802,6 +894,16 @@ final class DictationCoordinator: ObservableObject {
             return
         }
 
+        if let commandSelection {
+            try await applyCommand(
+                normalizedTranscript,
+                to: commandSelection,
+                configuration: session.effectiveConfiguration,
+                token: token
+            )
+            return
+        }
+        activeTextPayload?.rawTranscript = normalizedTranscript
         try await deliverTranscript(
             normalizedTranscript,
             configuration: session.effectiveConfiguration,
@@ -1060,6 +1162,135 @@ final class DictationCoordinator: ObservableObject {
         request: PostProcessingRequest,
         deadline: ContinuousClock.Instant
     ) async throws -> String {
+        try await runPostProcessing(until: deadline) {
+            let output = try await provider.process(request)
+            return try PostProcessingOutputPolicy.validatedOutput(
+                output,
+                rawTranscript: request.rawTranscript
+            )
+        }
+    }
+
+    private func applyCommand(
+        _ instruction: String,
+        to selection: EditableSelection,
+        configuration: SessionConfiguration,
+        token: SessionToken
+    ) async throws {
+        let providerID = configuration.postProcessingProvider
+        guard let provider = providerResolver.postProcessingProvider(for: providerID) else {
+            try await presentCommandFeedback(
+                "Choose a cleanup provider for Command Mode in Settings.",
+                token: token
+            )
+            return
+        }
+        guard transition(to: .postProcessing(providerID), token: token) else {
+            throw CancellationError()
+        }
+
+        let deadline = clock.now.advanced(by: .seconds(20))
+        let request = TextCommandRequest(
+            selectedText: selection.text,
+            spokenInstruction: instruction,
+            model: configuration.postProcessingModel,
+            fastModeEnabled: configuration.postProcessingFastModeEnabled,
+            deadline: deadline,
+            diagnosticSessionID: token.id
+        )
+        let replacement: String
+        do {
+            replacement = try await runPostProcessing(until: deadline) {
+                try await provider.process(request)
+            }
+        } catch {
+            try requireCurrent(token)
+            let message: String
+            if let failure = error as? ProviderOperationFailure {
+                message = failure == .deadlineExceeded
+                    ? "Command Mode took too long. Try a shorter selection."
+                    : failure.localizedDescription
+                if let issueKind = failure.configurationIssueKind {
+                    providerRuntimeHealth.markNeedsAttention(
+                        PostProcessingConfiguration(sessionConfiguration: configuration),
+                        kind: issueKind,
+                        message: message
+                    )
+                }
+            } else {
+                message = "The cleanup model could not rewrite the selection."
+            }
+            try await presentCommandFeedback(message, token: token)
+            return
+        }
+        try requireCurrent(token)
+
+        if replacement.utf16.elementsEqual(selection.text.utf16) {
+            try await presentCommandFeedback("No changes needed.", token: token)
+            return
+        }
+        guard transition(to: .inserting, token: token) else {
+            throw CancellationError()
+        }
+
+        let outcome = await selectionReplacer.replaceSelection(
+            selection,
+            with: replacement,
+            using: clipboardService,
+            sessionID: token.id
+        )
+        try requireCurrent(token)
+        switch outcome {
+        case .confirmed:
+            guard transition(to: .inserted, token: token) else {
+                throw CancellationError()
+            }
+        case .selectionChanged:
+            try await presentCommandFeedback(
+                "The selection changed. You can copy the rewrite.",
+                result: replacement,
+                token: token
+            )
+        case .unverified:
+            try await presentCommandFeedback(
+                "Couldn't confirm the replacement. Check the editor or copy the rewrite.",
+                result: replacement,
+                token: token
+            )
+        case .failed:
+            try await presentCommandFeedback(
+                "Couldn't replace the selection. You can copy the rewrite.",
+                result: replacement,
+                token: token
+            )
+        }
+    }
+
+    private func presentCommandFeedback(
+        _ message: String,
+        result: String? = nil,
+        token: SessionToken
+    ) async throws {
+        try requireCurrent(token)
+        commandResult = result
+        guard transition(
+            to: .commandFeedback(message: message, canCopyResult: result != nil),
+            token: token
+        ) else {
+            throw CancellationError()
+        }
+        try await sleep(
+            for: result == nil
+                ? TerminalDisplayDuration.commandFeedback
+                : TerminalDisplayDuration.commandResult,
+            token: token
+        )
+    }
+
+    private func runPostProcessing(
+        until deadline: ContinuousClock.Instant,
+        operation: @escaping @MainActor () async throws -> String
+    ) async throws -> String {
         let (results, completion) = AsyncThrowingStream<String, any Error>
             .makeStream(bufferingPolicy: .bufferingNewest(1))
         // A provider may still be unwinding after cancellation. The owner's
@@ -1067,16 +1298,12 @@ final class DictationCoordinator: ObservableObject {
         let processing = Task { @MainActor in
             do {
                 try Task.checkCancellation()
-                let output = try await provider.process(request)
+                let output = try await operation()
                 try Task.checkCancellation()
-                let validated = try PostProcessingOutputPolicy.validatedOutput(
-                    output,
-                    rawTranscript: request.rawTranscript
-                )
                 guard ContinuousClock.now < deadline else {
                     throw ProviderOperationFailure.deadlineExceeded
                 }
-                completion.yield(validated)
+                completion.yield(output)
                 completion.finish()
             } catch {
                 completion.finish(throwing: error)
@@ -1304,26 +1531,33 @@ final class DictationCoordinator: ObservableObject {
         return switch (current, next) {
         case
             (.idle, .preparing),
+            (.idle, .commandFeedback),
             (.preparing, .recording),
             (.preparing, .failed),
+            (.preparing, .commandFeedback),
             (.recording, .recording),
             (.recording, .finalizing),
+            (.recording, .commandFeedback),
             (.finalizing, .tooShort),
             (.finalizing, .captureFailed),
             (.finalizing, .transcribing),
             (.finalizing, .failed),
+            (.finalizing, .commandFeedback),
             (.captureFailed, .transcribing),
             (.transcribing, .transcribing),
             (.transcribing, .transcriptionFailed),
             (.transcribing, .postProcessing),
             (.transcribing, .inserting),
             (.transcribing, .noSpeech),
+            (.transcribing, .commandFeedback),
             (.transcriptionFailed, .transcriptionFailed),
             (.transcriptionFailed, .transcribing),
             (.postProcessing, .inserting),
+            (.postProcessing, .commandFeedback),
             (.inserting, .inserted),
             (.inserting, .insertionUnverified),
             (.inserting, .clipboardFallback),
+            (.inserting, .commandFeedback),
             (.inserting, .rawTranscriptFallback):
             true
         default:
@@ -1399,6 +1633,8 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
+        commandSelection = nil
+        commandResult = nil
 
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
@@ -1423,6 +1659,8 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
+        commandSelection = nil
+        commandResult = nil
 
         if let ownedArtifactURL {
             fileStore.delete(ownedArtifactURL)
@@ -1462,6 +1700,8 @@ final class DictationCoordinator: ObservableObject {
 
         activeTextPayload?.clear()
         activeTextPayload = nil
+        commandSelection = nil
+        commandResult = nil
         stopRequestedAt = nil
         failedSessionContext = nil
         let restoredClipboard =
@@ -1521,6 +1761,8 @@ final class DictationCoordinator: ObservableObject {
         activeClipboardTransaction = nil
         activeTextPayload?.clear()
         activeTextPayload = nil
+        commandSelection = nil
+        commandResult = nil
         stopRequestedAt = nil
         ownedArtifactURL = nil
         state = .idle
@@ -1704,6 +1946,7 @@ private enum SessionStateKind: Equatable {
     case insertionUnverified
     case clipboardFallback
     case rawTranscriptFallback
+    case commandFeedback
     case noSpeech
     case transcriptionFailed
     case captureFailed
@@ -1739,6 +1982,8 @@ private extension DictationSessionState {
             .clipboardFallback
         case .rawTranscriptFallback:
             .rawTranscriptFallback
+        case .commandFeedback:
+            .commandFeedback
         case .noSpeech:
             .noSpeech
         case .transcriptionFailed:
@@ -1770,6 +2015,7 @@ private extension SessionStateKind {
         case .insertionUnverified: "insertion_unverified"
         case .clipboardFallback: "clipboard_fallback"
         case .rawTranscriptFallback: "raw_fallback"
+        case .commandFeedback: "command_feedback"
         case .noSpeech: "no_speech"
         case .transcriptionFailed: "transcription_failed"
         case .captureFailed: "capture_failed"
@@ -1784,4 +2030,6 @@ private enum TerminalDisplayDuration {
     static let noSpeech: TimeInterval = 2
     static let rawFallback: TimeInterval = 2.5
     static let clipboardFallback: TimeInterval = 6
+    static let commandFeedback: TimeInterval = 5
+    static let commandResult: TimeInterval = 15
 }

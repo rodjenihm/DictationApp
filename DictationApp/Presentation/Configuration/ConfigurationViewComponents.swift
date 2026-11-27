@@ -342,6 +342,7 @@ struct ConfigurationStageDisclosure: View {
     let provider: ProviderID
     let capability: ProviderCapability
     var compact = true
+    var forCommand = false
 
     @ViewBuilder
     var body: some View {
@@ -349,10 +350,14 @@ struct ConfigurationStageDisclosure: View {
             let descriptor = viewModel.descriptor(for: provider),
             let metadata = descriptor.capabilities[capability]
         {
+            let isCloud = metadata.processingLocation == .cloud
+            let commandDescription = isCloud
+                ? "Command Mode sends your selected text and transcribed instruction to \(descriptor.displayName)."
+                : "Command Mode processes your selected text and transcribed instruction on this Mac."
             let disclosure = Label(
-                metadata.dataFlowDescription,
+                forCommand ? commandDescription : metadata.dataFlowDescription,
                 systemImage:
-                    metadata.processingLocation == .cloud
+                    isCloud
                     ? "icloud.and.arrow.up"
                     : "desktopcomputer"
             )

@@ -10,6 +10,7 @@ final class OverlayWindowController {
     private let onTranscribePartial: () -> Void
     private let onRepairTranscription: () -> Void
     private let onDismiss: () -> Void
+    private let onCopyCommandResult: () -> Void
 
     private var panel: OverlayPanel?
     private var hostingController: NSHostingController<OverlayView>?
@@ -22,7 +23,8 @@ final class OverlayWindowController {
         onDiscard: @escaping () -> Void,
         onTranscribePartial: @escaping () -> Void,
         onRepairTranscription: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        onCopyCommandResult: @escaping () -> Void
     ) {
         self.onStop = onStop
         self.onCancel = onCancel
@@ -31,6 +33,7 @@ final class OverlayWindowController {
         self.onTranscribePartial = onTranscribePartial
         self.onRepairTranscription = onRepairTranscription
         self.onDismiss = onDismiss
+        self.onCopyCommandResult = onCopyCommandResult
     }
 
     func prewarm() {
@@ -71,7 +74,8 @@ final class OverlayWindowController {
                 onDiscard: onDiscard,
                 onTranscribePartial: onTranscribePartial,
                 onRepairTranscription: onRepairTranscription,
-                onDismiss: onDismiss
+                onDismiss: onDismiss,
+                onCopyCommandResult: onCopyCommandResult
             )
 
             if let hostingController {

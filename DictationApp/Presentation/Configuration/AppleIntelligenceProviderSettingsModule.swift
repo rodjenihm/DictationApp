@@ -52,7 +52,6 @@ final class AppleIntelligenceProviderSettingsModule: ProviderSettingsModule {
     ) async throws {
         guard
             stages.contains(.postProcessing),
-            configuration.postProcessingMode == .enabled,
             configuration.postProcessingProvider == .appleIntelligence
         else {
             return

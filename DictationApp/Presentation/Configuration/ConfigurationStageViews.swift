@@ -239,11 +239,11 @@ struct ConfigurationPostProcessingView: View {
     var body: some View {
         ConfigurationPage(
             title: "Post-processing",
-            detail: "Edit punctuation, formatting, and fillers before pasting.",
+            detail: "Configure the model for dictation cleanup and Command Mode.",
             systemImage: SettingsDestination.postProcessing.systemImage
         ) {
             ConfigurationSection(
-                "Transcript cleanup",
+                "Text processing",
                 systemImage: "wand.and.stars"
             ) {
                 Toggle(
@@ -252,17 +252,11 @@ struct ConfigurationPostProcessingView: View {
                 )
                 .toggleStyle(.switch)
 
-                if viewModel.postProcessingEnabled {
+                if viewModel.usesPostProcessingProvider {
                     Divider()
                     ConfigurationForm {
-                        enabledConfiguration
+                        providerConfiguration
                     }
-                } else {
-                    Text(
-                        "The raw transcript is inserted without an additional provider request."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 }
             }
             .configurationPanel()
@@ -282,7 +276,7 @@ struct ConfigurationPostProcessingView: View {
     }
 
     @ViewBuilder
-    private var enabledConfiguration: some View {
+    private var providerConfiguration: some View {
         if let attention = viewModel.postProcessingAttentionMessage {
             ConfigurationIssueLabel(
                 message: attention,
@@ -371,12 +365,24 @@ struct ConfigurationPostProcessingView: View {
             }
         }
 
-        ConfigurationFormSupplementary {
-            ConfigurationStageDisclosure(
-                viewModel: viewModel,
-                provider: viewModel.postProcessingProviderChoice,
-                capability: .postProcessing
-            )
+        if viewModel.postProcessingEnabled {
+            ConfigurationFormSupplementary {
+                ConfigurationStageDisclosure(
+                    viewModel: viewModel,
+                    provider: viewModel.postProcessingProviderChoice,
+                    capability: .postProcessing
+                )
+            }
+        }
+        if viewModel.commandShortcut != nil {
+            ConfigurationFormSupplementary {
+                ConfigurationStageDisclosure(
+                    viewModel: viewModel,
+                    provider: viewModel.postProcessingProviderChoice,
+                    capability: .postProcessing,
+                    forCommand: true
+                )
+            }
         }
     }
 

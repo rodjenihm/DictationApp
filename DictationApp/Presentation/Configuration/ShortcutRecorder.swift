@@ -7,6 +7,7 @@ struct ShortcutRecorder: NSViewRepresentable {
 
     let shortcut: GlobalShortcut?
     let accessibilityLabel: String
+    var allowsCommandModifiers = false
     let onCandidate: (GlobalShortcut) -> Void
     let onCaptureChanged: (ObjectIdentifier, ((GlobalShortcut) -> Void)?) -> Void
 
@@ -35,6 +36,7 @@ struct ShortcutRecorder: NSViewRepresentable {
         control.onCaptureChanged = onCaptureChanged
         control.shortcut = shortcut
         control.shortcutAccessibilityLabel = accessibilityLabel
+        control.allowsCommandModifiers = allowsCommandModifiers
         control.isEnabled = environmentIsEnabled
         control.refreshTitle()
         control.refreshAccessibility()
@@ -44,11 +46,13 @@ struct ShortcutRecorder: NSViewRepresentable {
 final class ShortcutRecorderControl: SettingsNativeButton {
     var shortcut: GlobalShortcut?
     var shortcutAccessibilityLabel = "Dictation shortcut"
+    var allowsCommandModifiers = false
     var onCandidate: ((GlobalShortcut) -> Void)?
     var onCaptureChanged: ((ObjectIdentifier, ((GlobalShortcut) -> Void)?) -> Void)?
 
     private var isRecording = false
     private var isStandaloneFunctionCandidate = false
+    private var commandModifierCandidate: GlobalShortcut?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -85,6 +89,7 @@ final class ShortcutRecorderControl: SettingsNativeButton {
 
         isRecording = true
         isStandaloneFunctionCandidate = false
+        commandModifierCandidate = nil
         onCaptureChanged?(ObjectIdentifier(self)) { [weak self] candidate in
             self?.acceptCandidate(candidate)
         }
@@ -99,6 +104,7 @@ final class ShortcutRecorderControl: SettingsNativeButton {
         }
 
         isStandaloneFunctionCandidate = false
+        commandModifierCandidate = nil
         guard !event.isARepeat else {
             return
         }
@@ -137,6 +143,27 @@ final class ShortcutRecorderControl: SettingsNativeButton {
         guard isRecording else {
             super.flagsChanged(with: event)
             return
+        }
+
+        if allowsCommandModifiers {
+            let flags = event.modifierFlags
+            let modifiers = Self.carbonModifiers(from: flags)
+                | (flags.contains(.function) ? GlobalShortcut.functionModifier : 0)
+            if let candidate = commandModifierCandidate,
+                modifiers & candidate.modifiers != candidate.modifiers
+            {
+                acceptCandidate(candidate)
+                return
+            }
+            commandModifierCandidate = switch modifiers {
+            case GlobalShortcut.functionControl.modifiers: .functionControl
+            case GlobalShortcut.commandControlOption.modifiers: .commandControlOption
+            default: nil
+            }
+            if commandModifierCandidate != nil {
+                isStandaloneFunctionCandidate = false
+                return
+            }
         }
 
         guard UInt32(event.keyCode) == GlobalShortcut.functionKeyCode else {
@@ -207,6 +234,7 @@ final class ShortcutRecorderControl: SettingsNativeButton {
         }
         isRecording = false
         isStandaloneFunctionCandidate = false
+        commandModifierCandidate = nil
         onCaptureChanged?(ObjectIdentifier(self), nil)
         refreshTitle()
         refreshAccessibility()

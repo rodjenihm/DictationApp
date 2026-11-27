@@ -56,4 +56,5 @@ protocol PostProcessingProvider {
     var providerID: ProviderID { get }
 
     func process(_ request: PostProcessingRequest) async throws -> String
+    func process(_ request: TextCommandRequest) async throws -> String
 }

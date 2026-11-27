@@ -141,6 +141,11 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
         return true
     }
 
+    fileprivate func finishRestorationIfOwned() async {
+        restoreIfOwned()
+        await deferredRestorationTask?.value
+    }
+
     @discardableResult
     func cancelAndRestoreIfOwned() -> Bool {
         restoreIfOwned()
@@ -172,6 +177,11 @@ final class ClipboardTransaction: ClipboardTransactionHandling {
 @MainActor
 final class PasteboardClipboardService: TranscriptClipboardServicing {
     private let pasteboard: NSPasteboard
+    private var latestTransaction: ClipboardTransaction?
+
+    var hasPendingRestoration: Bool {
+        latestTransaction?.isStillOwned == true
+    }
 
     init(pasteboard: NSPasteboard = .general) {
         self.pasteboard = pasteboard
@@ -181,10 +191,19 @@ final class PasteboardClipboardService: TranscriptClipboardServicing {
         replacingContentsWith transcript: String,
         sessionID: UUID
     ) -> any ClipboardTransactionHandling {
-        ClipboardTransaction(
+        let transaction = ClipboardTransaction(
             pasteboard: pasteboard,
             replacement: transcript,
             sessionID: sessionID
         )
+        latestTransaction = transaction
+        return transaction
+    }
+
+    func finishPendingRestoration() async {
+        guard let latestTransaction, latestTransaction.isStillOwned else {
+            return
+        }
+        await latestTransaction.finishRestorationIfOwned()
     }
 }

@@ -12,6 +12,9 @@ enum OverlayViewState: Equatable {
     case completed(duration: TimeInterval)
     case transcribing(providerName: String)
     case postProcessing(providerName: String)
+    case commandListening(elapsed: TimeInterval)
+    case commandWorking(message: String)
+    case commandFeedback(message: String, canCopyResult: Bool)
     case inserting
     case inserted
     case insertionUnverified(message: String)

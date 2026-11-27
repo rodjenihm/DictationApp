@@ -86,6 +86,7 @@ struct ConfigurationDraft: Equatable {
     var configuration: AppConfiguration
     var shortcut: GlobalShortcut
     var holdShortcut: GlobalShortcut?
+    var commandShortcut: GlobalShortcut?
     var soundCuesEnabled: Bool
 }
 
@@ -150,6 +151,8 @@ final class ConfigurationViewModel {
         GlobalShortcut.defaultShortcut
     private(set) var holdShortcut: GlobalShortcut? =
         GlobalShortcut.defaultHoldShortcut
+    private(set) var commandShortcut: GlobalShortcut? =
+        GlobalShortcut.defaultCommandShortcut
 
     private(set) var microphoneStatus:
         MicrophonePermissionStatus = .notDetermined
@@ -160,6 +163,7 @@ final class ConfigurationViewModel {
     private(set) var shortcutErrorMessage: String?
     private(set) var toggleShortcutAvailabilityMessage: String?
     private(set) var holdShortcutAvailabilityMessage: String?
+    private(set) var commandShortcutAvailabilityMessage: String?
     private(set) var successMessage: String?
     private(set) var issues: [ConfigurationIssue] = []
     private(set) var hasCompletedFirstRun = false
@@ -198,8 +202,11 @@ final class ConfigurationViewModel {
     private var savedShortcut = GlobalShortcut.defaultShortcut
     private var savedHoldShortcut: GlobalShortcut? =
         GlobalShortcut.defaultHoldShortcut
+    private var savedCommandShortcut: GlobalShortcut? =
+        GlobalShortcut.defaultCommandShortcut
     private var retriesToggleShortcutRegistration = false
     private var retriesHoldShortcutRegistration = false
+    private var retriesCommandShortcutRegistration = false
     @ObservationIgnored
     private var shortcutCaptureOwner: ObjectIdentifier?
     private var savedSoundCuesEnabled = true
@@ -440,6 +447,10 @@ final class ConfigurationViewModel {
         availableProviders(for: .postProcessing)
     }
 
+    var usesPostProcessingProvider: Bool {
+        postProcessingEnabled || commandShortcut != nil
+    }
+
     var availableLanguages: [ProviderLanguageDescriptor] {
         guard
             let descriptor =
@@ -514,7 +525,7 @@ final class ConfigurationViewModel {
 
     var postProcessingAttentionMessage: String? {
         _ = postProcessingHealthRevision
-        guard savedConfiguration.postProcessingMode == .enabled else {
+        guard savedConfiguration.postProcessingMode == .enabled || savedCommandShortcut != nil else {
             return nil
         }
         return providerRuntimeHealth.message(
@@ -553,6 +564,7 @@ final class ConfigurationViewModel {
         case .general:
             return shouldUpdateToggleShortcut
                 || shouldUpdateHoldShortcut
+                || shouldUpdateCommandShortcut
                 || audioInputPreference
                     != savedConfiguration.audioInputPreference
                 || soundCuesEnabled != savedSoundCuesEnabled
@@ -663,12 +675,15 @@ final class ConfigurationViewModel {
         savedConfiguration = stored.configuration
         savedShortcut = stored.globalShortcut
         savedHoldShortcut = stored.holdShortcut
+        savedCommandShortcut = stored.commandShortcut
         retriesToggleShortcutRegistration = false
         retriesHoldShortcutRegistration = false
+        retriesCommandShortcutRegistration = false
         savedSoundCuesEnabled = stored.soundCuesEnabled
         hasCompletedFirstRun = stored.hasCompletedFirstRun
         globalShortcut = stored.globalShortcut
         holdShortcut = stored.holdShortcut
+        commandShortcut = stored.commandShortcut
         soundCuesEnabled = stored.soundCuesEnabled
         apply(stored.configuration)
         if
@@ -749,7 +764,8 @@ final class ConfigurationViewModel {
         guard validateShortcutEdit(
             candidate,
             toggle: candidate,
-            hold: holdShortcut
+            hold: holdShortcut,
+            command: commandShortcut
         ) else {
             return
         }
@@ -762,13 +778,29 @@ final class ConfigurationViewModel {
         guard validateShortcutEdit(
             candidate,
             toggle: globalShortcut,
-            hold: candidate
+            hold: candidate,
+            command: commandShortcut
         ) else {
             return
         }
         holdShortcut = candidate
         retriesHoldShortcutRegistration = candidate == savedHoldShortcut
             && shortcutService.activeHoldShortcut != candidate
+    }
+
+    func updateCommandShortcut(_ candidate: GlobalShortcut?) {
+        guard validateShortcutEdit(
+            candidate,
+            toggle: globalShortcut,
+            hold: holdShortcut,
+            command: candidate,
+            forCommand: true
+        ) else {
+            return
+        }
+        commandShortcut = candidate
+        retriesCommandShortcutRegistration = candidate == savedCommandShortcut
+            && shortcutService.activeCommandShortcut != candidate
     }
 
     func setShortcutCapture(
@@ -806,10 +838,16 @@ final class ConfigurationViewModel {
         holdShortcut != savedHoldShortcut || retriesHoldShortcutRegistration
     }
 
+    private var shouldUpdateCommandShortcut: Bool {
+        commandShortcut != savedCommandShortcut || retriesCommandShortcutRegistration
+    }
+
     private func validateShortcutEdit(
         _ candidate: GlobalShortcut?,
         toggle: GlobalShortcut,
-        hold: GlobalShortcut?
+        hold: GlobalShortcut?,
+        command: GlobalShortcut?,
+        forCommand: Bool = false
     ) -> Bool {
         guard canEditShortcuts else {
             return false
@@ -818,9 +856,9 @@ final class ConfigurationViewModel {
             if toggle.isStandaloneFunctionKey {
                 throw GlobalShortcutRegistrationError.standaloneFunctionKeyRequiresHold
             }
-            try shortcutService.validateDistinctShortcuts(toggle: toggle, hold: hold)
+            try shortcutService.validateDistinctShortcuts(toggle: toggle, hold: hold, command: command)
             if let candidate {
-                try shortcutService.validateCandidate(candidate)
+                try shortcutService.validateCandidate(candidate, forCommand: forCommand)
             }
             shortcutErrorMessage = nil
             clearIssue(for: .shortcut)
@@ -854,12 +892,26 @@ final class ConfigurationViewModel {
         } else {
             holdShortcutAvailabilityMessage = nil
         }
+
+        if let savedCommandShortcut,
+            shortcutService.activeCommandShortcut == nil,
+            let error = shortcutService.commandRegistrationError
+        {
+            let guidance = savedCommandShortcut.usesEventTap
+                ? error.localizedDescription
+                : "Choose a different shortcut or disable it, then save."
+            commandShortcutAvailabilityMessage =
+                "The saved Command Mode shortcut (\(savedCommandShortcut.displayName)) is unavailable. \(guidance)"
+        } else {
+            commandShortcutAvailabilityMessage = nil
+        }
     }
 
     private func refreshShortcutsAfterPermissionChange() {
         let didRegister = shortcutService.retryPermissionBlockedShortcuts(
             toggle: savedShortcut,
-            hold: savedHoldShortcut
+            hold: savedHoldShortcut,
+            command: savedCommandShortcut
         )
         refreshShortcutAvailability()
         if didRegister {
@@ -1008,8 +1060,10 @@ final class ConfigurationViewModel {
             try shortcutService.replaceShortcuts(
                 toggle: globalShortcut,
                 hold: holdShortcut,
+                command: commandShortcut,
                 updateToggle: shouldUpdateToggleShortcut,
-                updateHold: shouldUpdateHoldShortcut
+                updateHold: shouldUpdateHoldShortcut,
+                updateCommand: shouldUpdateCommandShortcut
             ) {
                 try commitProviders()
                 try settingsStore.commit(
@@ -1017,7 +1071,8 @@ final class ConfigurationViewModel {
                     hasCompletedFirstRun: true,
                     soundCuesEnabled: soundCuesEnabled,
                     globalShortcut: globalShortcut,
-                    holdShortcut: holdShortcut
+                    holdShortcut: holdShortcut,
+                    commandShortcut: commandShortcut
                 )
             }
 
@@ -1032,16 +1087,15 @@ final class ConfigurationViewModel {
                 configuration.postProcessing.modelsByProvider
             savedShortcut = globalShortcut
             savedHoldShortcut = holdShortcut
+            savedCommandShortcut = commandShortcut
             retriesToggleShortcutRegistration = false
             retriesHoldShortcutRegistration = false
+            retriesCommandShortcutRegistration = false
             refreshShortcutAvailability()
             savedSoundCuesEnabled = soundCuesEnabled
             hasCompletedFirstRun = true
 
-            if
-                configuration.postProcessingMode == .enabled,
-                stages.contains(.postProcessing)
-            {
+            if stages.contains(.postProcessing) {
                 providerRuntimeHealth.clearAfterValidation(
                     provider: configuration.postProcessingProvider,
                     capability: .postProcessing,
@@ -1103,7 +1157,8 @@ final class ConfigurationViewModel {
             hasCompletedFirstRun: hasCompletedFirstRun,
             soundCuesEnabled: savedSoundCuesEnabled,
             globalShortcut: savedShortcut,
-            holdShortcut: savedHoldShortcut
+            holdShortcut: savedHoldShortcut,
+            commandShortcut: savedCommandShortcut
         )
 
         affectedModules.forEach { $0.didSave() }
@@ -1168,23 +1223,18 @@ final class ConfigurationViewModel {
             )
                 || configuration.postProcessingProvider
                     != savedConfiguration.postProcessingProvider
-                || (
-                    configuration.postProcessingModel.isCustom
-                        && configuration.postProcessingModel
-                            != savedConfiguration.postProcessingModel
-                )
+                || configuration.postProcessingModel
+                    != savedConfiguration.postProcessingModel
         let postProcessingProviderSetupChanged =
             providerRegistry.settingsModule(
                 for: configuration.postProcessingProvider
             )?.isDirty ?? false
-        if
-            configuration.postProcessingMode == .enabled,
-            postProcessingChanged
-                || (
-                    presentationMode == .full
-                        && postProcessingProviderSetupChanged
-                )
-        {
+        let needsPostProcessingSetupValidation =
+            configuration.postProcessingMode == .enabled
+                && presentationMode == .full
+                && postProcessingProviderSetupChanged
+        if (usesPostProcessingProvider && postProcessingChanged)
+            || needsPostProcessingSetupValidation {
             result.insert(.postProcessing)
         }
         return result
@@ -1249,7 +1299,10 @@ final class ConfigurationViewModel {
         }
 
         if
-            postProcessingEnabled,
+            postProcessingEnabled || (
+                commandShortcut != nil
+                    && configuration.postProcessing != savedConfiguration.postProcessing
+            ),
             resolvedPostProcessingModel.isEmpty
         {
             replaceIssue(
@@ -1373,6 +1426,7 @@ final class ConfigurationViewModel {
             configuration: configuration,
             shortcut: globalShortcut,
             holdShortcut: holdShortcut,
+            commandShortcut: commandShortcut,
             soundCuesEnabled: soundCuesEnabled
         )
     }
@@ -1382,6 +1436,7 @@ final class ConfigurationViewModel {
             configuration: savedConfiguration,
             shortcut: savedShortcut,
             holdShortcut: savedHoldShortcut,
+            commandShortcut: savedCommandShortcut,
             soundCuesEnabled: savedSoundCuesEnabled
         )
     }
@@ -1647,7 +1702,7 @@ final class ConfigurationViewModel {
                 )
             }
             if
-                postProcessingEnabled,
+                usesPostProcessingProvider,
                 postProcessingProviderChoice == failure.provider
             {
                 replaceIssue(

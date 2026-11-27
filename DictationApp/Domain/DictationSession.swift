@@ -204,6 +204,7 @@ enum DictationSessionState: Equatable, Sendable {
     case insertionUnverified(String)
     case clipboardFallback(String)
     case rawTranscriptFallback(CleanupFallback)
+    case commandFeedback(message: String, canCopyResult: Bool)
     case noSpeech
     case transcriptionFailed(TranscriptionFailureState)
     case captureFailed(RecoverableCaptureFailureState)

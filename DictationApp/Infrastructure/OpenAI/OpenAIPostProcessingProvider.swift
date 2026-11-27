@@ -63,6 +63,11 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
     enclosing quotes, code fences, or Markdown.
     """
 
+    private static let commandOutputInstructions = """
+    Return a JSON object with the single field replacement_text. Set that field to \
+    null if you cannot fulfill the instruction as a text edit. Return only that object.
+    """
+
     private let credentialStore: any CredentialStore
     private let session: URLSession
     private let baseURL: URL
@@ -107,13 +112,53 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
             PostProcessingOutputPolicy.maximumOutputTokens(
                 for: request.rawTranscript
             )
-        var payload = OpenAICleanupPayload(
+        let payload = OpenAICleanupPayload(
             model: model,
             instructions: Self.cleanupInstructions,
             input: serializedTranscript,
             maxOutputTokens: maximumOutputTokens,
             fastModeEnabled: request.fastModeEnabled
         )
+        return try await send(
+            payload,
+            credential: credential,
+            deadline: request.deadline,
+            diagnosticSessionID: request.diagnosticSessionID,
+            preparationStartedAt: preparationStartedAt
+        )
+    }
+
+    func process(_ request: TextCommandRequest) async throws -> String {
+        let preparationStartedAt = ContinuousClock.now
+        let edit = try request.prepare()
+        let model = try modelIdentifier(for: request.model)
+        let credential = try await resolveCredential()
+        let payload = OpenAICleanupPayload(
+            model: model,
+            instructions: "\(edit.instructions)\n\n\(Self.commandOutputInstructions)",
+            input: edit.input,
+            maxOutputTokens: 4_096,
+            fastModeEnabled: request.fastModeEnabled
+        )
+        let result = try await send(
+            payload,
+            credential: credential,
+            deadline: request.deadline,
+            diagnosticSessionID: request.diagnosticSessionID,
+            preparationStartedAt: preparationStartedAt
+        )
+        let response = try? decoder.decode(CommandReplacement.self, from: Data(result.utf8))
+        return try request.validatedReplacement(response?.replacementText)
+    }
+
+    private func send(
+        _ initialPayload: OpenAICleanupPayload,
+        credential: String,
+        deadline: ContinuousClock.Instant?,
+        diagnosticSessionID: UUID?,
+        preparationStartedAt: ContinuousClock.Instant
+    ) async throws -> String {
+        var payload = initialPayload
         var urlRequest = try makeRequest(
             credential: credential,
             payload: payload
@@ -121,19 +166,19 @@ final class OpenAIPostProcessingProvider: PostProcessingProvider {
         AppLog.recordLatency(
             "openai_cleanup_request_preparation",
             since: preparationStartedAt,
-            sessionID: request.diagnosticSessionID
+            sessionID: diagnosticSessionID
         )
 
         let initialServiceTier = payload.serviceTier
         var attempt = 0
         return try await retryExecutor.execute(
-            deadline: request.deadline,
-            diagnosticSessionID: request.diagnosticSessionID
+            deadline: deadline,
+            diagnosticSessionID: diagnosticSessionID
         ) { [self] in
             try Task.checkCancellation()
             attempt += 1
             let serviceTier = payload.serviceTier
-            let diagnostics = request.diagnosticSessionID.map { sessionID in
+            let diagnostics = diagnosticSessionID.map { sessionID in
                 let requestedTier = switch serviceTier {
                 case .fast: "fast"
                 case .standard: "standard"
@@ -499,6 +544,14 @@ private struct RawTranscriptInput: Encodable {
 
     enum CodingKeys: String, CodingKey {
         case rawTranscript = "raw_transcript"
+    }
+}
+
+private struct CommandReplacement: Decodable {
+    let replacementText: String?
+
+    enum CodingKeys: String, CodingKey {
+        case replacementText = "replacement_text"
     }
 }
 

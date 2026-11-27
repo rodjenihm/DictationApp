@@ -75,6 +75,10 @@ final class ProviderRuntimeHealthStore: ObservableObject {
         }?.message
     }
 
+    func clearAfterCredentialChange(for provider: ProviderID) {
+        attentions.removeAll { $0.provider == provider }
+    }
+
     func clearAfterValidation(
         provider: ProviderID,
         capability: ProviderCapability,

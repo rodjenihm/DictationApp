@@ -34,8 +34,14 @@ struct MenuBarContent: View {
                 appModel.discardTranscription()
             }
         } else if appModel.canCancel {
-            Button("Cancel Dictation") {
+            Button(appModel.cancelActionTitle) {
                 appModel.cancelDictation()
+            }
+        }
+
+        if appModel.canCopyCommandResult {
+            Button("Copy Command Result") {
+                appModel.copyCommandResult()
             }
         }
 

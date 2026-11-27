@@ -22,8 +22,19 @@ struct GlobalShortcut: Codable, Equatable {
         modifiers: functionModifier
     )
 
+    static let functionControl = GlobalShortcut(
+        keyCode: functionKeyCode,
+        modifiers: functionModifier | UInt32(controlKey)
+    )
+
+    static let commandControlOption = GlobalShortcut(
+        keyCode: UInt32(kVK_Command),
+        modifiers: UInt32(cmdKey | controlKey | optionKey)
+    )
+
     static let defaultShortcut = functionSpace
     static let defaultHoldShortcut = standaloneFunctionKey
+    static let defaultCommandShortcut = functionControl
 
     init(keyCode: UInt32, modifiers: UInt32) {
         self.keyCode = keyCode
@@ -38,6 +49,14 @@ struct GlobalShortcut: Codable, Equatable {
         self == Self.standaloneFunctionKey
     }
 
+    var isCommandModifierChord: Bool {
+        self == Self.functionControl || self == Self.commandControlOption
+    }
+
+    var usesEventTap: Bool {
+        usesFunctionModifier || isCommandModifierChord
+    }
+
     var isConfigurable: Bool {
         if usesFunctionModifier {
             return isStandaloneFunctionKey || self == Self.functionSpace
@@ -46,11 +65,22 @@ struct GlobalShortcut: Codable, Equatable {
         return modifiers != 0
             && modifiers & ~Self.carbonModifierMask == 0
             && keyCode != Self.functionKeyCode
+            && !isCommandModifierChord
+    }
+
+    var isCommandConfigurable: Bool {
+        isCommandModifierChord || (isConfigurable && !isStandaloneFunctionKey)
     }
 
     var displayName: String {
         if isStandaloneFunctionKey {
             return "Fn"
+        }
+        if self == Self.functionControl {
+            return "Fn–Control"
+        }
+        if self == Self.commandControlOption {
+            return "⌃⌥⌘"
         }
 
         var result = ""

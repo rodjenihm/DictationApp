@@ -111,6 +111,10 @@ Both interactions use the same recording and transcription pipeline. See
 the [hold-to-dictate feature specification](features/16-hold-to-dictate.md)
 for release behavior and upgrades.
 
+Use Fn–Control to hold and speak an edit instruction for selected text.
+See the [Command Mode specification](features/17-command-mode.md) for
+selection validation, shortcut precedence, and replacement behavior.
+
 ## Transcription providers
 
 Providers are interchangeable behind a common interface.
@@ -563,7 +567,7 @@ This is a delivery strategy, not a requirement to use strict backend-style Verti
 - Separate background daemon or XPC service
 - App Store distribution, billing, notarization, or release packaging
 - Launch at login for the development-stage initial version
-- Custom post-processing prompts or cleanup instructions
+- Custom prompts for automatic dictation cleanup
 - Cleanup intensity, tone, or writing-style presets
 - Per-application cleanup profiles
 - Bundled or user-selected local model runtimes

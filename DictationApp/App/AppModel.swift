@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var canTranscribePartial = false
     @Published private(set) var canDiscardPartial = false
     @Published private(set) var canDismissDeliveryStatus = false
+    @Published private(set) var canCopyCommandResult = false
 
     private let settingsStore = SettingsStore()
     private let credentialStore = KeychainCredentialStore()
@@ -25,7 +26,10 @@ final class AppModel: ObservableObject {
     private let recordingFileStore = RecordingFileStore()
     private let providerRuntimeHealth =
         ProviderRuntimeHealthStore()
+    private let clipboardService = PasteboardClipboardService()
+    private let textInsertionService = AccessibilityTextInsertionService()
     private var hasStarted = false
+    private var hasStopped = false
     private var holdOwnsCapture = false
     private var sessionStateCancellable: AnyCancellable?
     private var providerSettingsCancellables: [AnyCancellable] = []
@@ -100,8 +104,9 @@ final class AppModel: ObservableObject {
         fileStore: recordingFileStore,
         providerResolver: providerRegistry,
         providerRuntimeHealth: providerRuntimeHealth,
-        clipboardService: PasteboardClipboardService(),
-        textInsertionService: AccessibilityTextInsertionService()
+        clipboardService: clipboardService,
+        textInsertionService: textInsertionService,
+        selectionReplacer: textInsertionService
     )
 
     private lazy var configurationViewModel: ConfigurationViewModel = {
@@ -146,6 +151,9 @@ final class AppModel: ObservableObject {
         },
         onDismiss: { [weak self] in
             self?.dismissDeliveryStatus()
+        },
+        onCopyCommandResult: { [weak self] in
+            self?.copyCommandResult()
         }
     )
 
@@ -183,7 +191,7 @@ final class AppModel: ObservableObject {
             guard let self else {
                 return
             }
-            if replacesHold && self.holdOwnsCapture {
+            if replacesHold && self.holdOwnsCapture && !self.dictationCoordinator.isCommandSession {
                 self.holdOwnsCapture = false
                 return
             }
@@ -196,11 +204,16 @@ final class AppModel: ObservableObject {
             self?.endHold(receivedAt: receivedAt)
         }
         shortcutService.onHoldShortcutCancelled = { [weak self] in
-            guard let self, self.holdOwnsCapture else {
-                return
-            }
-            self.holdOwnsCapture = false
-            self.dictationCoordinator.cancelImmediately()
+            self?.cancelHold(forCommand: false)
+        }
+        shortcutService.onCommandShortcutPressed = { [weak self] receivedAt in
+            self?.startCommand(receivedAt: receivedAt)
+        }
+        shortcutService.onCommandShortcutReleased = { [weak self] receivedAt in
+            self?.endHold(receivedAt: receivedAt, forCommand: true)
+        }
+        shortcutService.onCommandShortcutCancelled = { [weak self] in
+            self?.cancelHold(forCommand: true)
         }
         shortcutService.onSessionCancellationShortcutPressed = {
             [weak self] in
@@ -211,7 +224,8 @@ final class AppModel: ObservableObject {
         do {
             try shortcutService.start(
                 toggle: settings.globalShortcut,
-                hold: settings.holdShortcut
+                hold: settings.holdShortcut,
+                command: settings.commandShortcut
             )
             AppLog.lifecycle.info("Global shortcut service started")
         } catch {
@@ -267,11 +281,23 @@ final class AppModel: ObservableObject {
     }
 
     func stop() {
+        guard !hasStopped else {
+            return
+        }
+        hasStopped = true
         AppLog.lifecycle.notice("Bounded application shutdown started")
         dictationCoordinator.shutdownImmediately()
         overlayWindowController.dismiss()
         shortcutService.stop()
         AppLog.lifecycle.notice("Application shutdown cleanup finished")
+    }
+
+    var hasPendingClipboardRestoration: Bool {
+        clipboardService.hasPendingRestoration
+    }
+
+    func finishPendingClipboardRestoration() async {
+        await clipboardService.finishPendingRestoration()
     }
 
     func performPrimaryAction(
@@ -281,10 +307,10 @@ final class AppModel: ObservableObject {
         switch dictationCoordinator.state {
         case .idle:
             startDictation(receivedAt: receivedAt, fromHold: fromHold)
-        case .rawTranscriptFallback:
+        case .rawTranscriptFallback, .commandFeedback:
             dictationCoordinator.dismissDeliveryStatus()
             startDictation(receivedAt: receivedAt, fromHold: fromHold)
-        case .recording where !fromHold:
+        case .recording where !fromHold && !dictationCoordinator.isCommandSession:
             dictationCoordinator.stop(receivedAt: receivedAt)
         case
             .preparing,
@@ -331,12 +357,30 @@ final class AppModel: ObservableObject {
         dictationCoordinator.dismissDeliveryStatus()
     }
 
+    func copyCommandResult() {
+        guard let result = dictationCoordinator.copyableCommandResult() else {
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        if pasteboard.setString(result, forType: .string) {
+            dismissDeliveryStatus()
+        }
+    }
+
+    var cancelActionTitle: String {
+        dictationCoordinator.isCommandSession ? "Cancel Command" : "Cancel Dictation"
+    }
+
     func quit() {
         NSApp.terminate(nil)
     }
 
-    private func endHold(receivedAt: ContinuousClock.Instant) {
-        guard holdOwnsCapture else {
+    private func endHold(
+        receivedAt: ContinuousClock.Instant,
+        forCommand: Bool = false
+    ) {
+        guard holdOwnsCapture, dictationCoordinator.isCommandSession == forCommand else {
             return
         }
         holdOwnsCapture = false
@@ -349,6 +393,78 @@ final class AppModel: ObservableObject {
         default:
             break
         }
+    }
+
+    private func cancelHold(forCommand: Bool) {
+        guard holdOwnsCapture, dictationCoordinator.isCommandSession == forCommand else {
+            return
+        }
+        holdOwnsCapture = false
+        dictationCoordinator.cancelImmediately()
+    }
+
+    private func startCommand(receivedAt: ContinuousClock.Instant) {
+        if case .commandFeedback = dictationCoordinator.state {
+            dismissDeliveryStatus()
+        }
+        guard dictationCoordinator.state == .idle else {
+            return
+        }
+        guard !configurationViewModel.isValidating else {
+            dictationCoordinator.showCommandRejection(
+                "Finish Settings validation before running a command."
+            )
+            return
+        }
+
+        let selection: EditableSelection
+        do {
+            selection = try textInsertionService.captureEditableSelection()
+        } catch {
+            dictationCoordinator.showCommandRejection(error.localizedDescription)
+            return
+        }
+        guard selection.text.utf8.count <= TextCommandRequest.maximumSelectionUTF8Count else {
+            dictationCoordinator.showCommandRejection("Select a shorter passage to run a command.")
+            return
+        }
+
+        let settings = settingsStore.load()
+        let configuration = settings.configuration
+        let transcriptionReadiness = providerRegistry.readiness(
+            for: configuration.transcriptionProvider,
+            capability: .transcription
+        )
+        guard isUsable(transcriptionReadiness), configuration.isStructurallyValid else {
+            dictationCoordinator.showCommandRejection(
+                "Check the transcription and cleanup settings before running a command."
+            )
+            return
+        }
+        providerRegistry.settingsModule(for: configuration.postProcessingProvider)?
+            .refreshSystemState()
+        let cleanupReadiness = providerRegistry.readiness(
+            for: configuration.postProcessingProvider,
+            capability: .postProcessing
+        )
+        guard
+            isUsable(cleanupReadiness),
+            !configuration.postProcessingModel.normalized.identifier.isEmpty,
+            !providerRuntimeHealth.shouldSkip(
+                PostProcessingConfiguration(appConfiguration: configuration)
+            )
+        else {
+            dictationCoordinator.showCommandRejection(
+                "Check the Command Mode provider in Post-processing settings."
+            )
+            return
+        }
+        startCapture(
+            settings: settings,
+            receivedAt: receivedAt,
+            fromHold: true,
+            commandSelection: selection
+        )
     }
 
     private func startDictation(
@@ -392,17 +508,37 @@ final class AppModel: ObservableObject {
             return
         }
 
+        startCapture(
+            settings: storedSettings,
+            receivedAt: receivedAt,
+            fromHold: fromHold
+        )
+    }
+
+    private func startCapture(
+        settings: StoredSettings,
+        receivedAt: ContinuousClock.Instant,
+        fromHold: Bool,
+        commandSelection: EditableSelection? = nil
+    ) {
+        let isCommand = commandSelection != nil
         do {
             try shortcutService.registerSessionCancellationShortcut(
-                forHold: fromHold
+                forHold: fromHold && !isCommand,
+                forCommand: isCommand
             )
         } catch {
             AppLog.session.error(
-                "Dictation start blocked by cancellation shortcut conflict"
+                "Recording start blocked by cancellation shortcut conflict"
             )
-            statusText =
+            let message =
                 (error as? LocalizedError)?.errorDescription
                 ?? "Escape could not be reserved for cancellation. Recording did not start."
+            if isCommand {
+                dictationCoordinator.showCommandRejection(message)
+                return
+            }
+            statusText = message
             primaryActionTitle = "Start Dictation"
             isPrimaryActionEnabled = true
             canCancel = false
@@ -412,13 +548,14 @@ final class AppModel: ObservableObject {
         holdOwnsCapture = fromHold
         dictationCoordinator.start(
             configuration: SessionConfiguration(
-                configuration: configuration,
+                configuration: settings.configuration,
                 recordingProfile: .completedM4A
             ),
-            soundCuesEnabled: storedSettings.soundCuesEnabled,
+            soundCuesEnabled: settings.soundCuesEnabled,
+            commandSelection: commandSelection,
             receivedAt: receivedAt
         )
-        AppLog.session.info("Dictation start accepted")
+        AppLog.session.info("Recording start accepted")
     }
 
     private func refreshStatus(force: Bool = false) {
@@ -436,6 +573,7 @@ final class AppModel: ObservableObject {
         canTranscribePartial = false
         canDiscardPartial = false
         canDismissDeliveryStatus = false
+        canCopyCommandResult = false
 
         let readiness = providerRegistry.readiness(
             for: configuration.transcriptionProvider,
@@ -484,6 +622,11 @@ final class AppModel: ObservableObject {
         canTranscribePartial = false
         canDiscardPartial = false
         canDismissDeliveryStatus = false
+        canCopyCommandResult = false
+
+        if dictationCoordinator.isCommandSession, applyCommandProgress(state) {
+            return
+        }
 
         switch state {
         case .idle:
@@ -568,7 +711,9 @@ final class AppModel: ObservableObject {
             shortcutService.unregisterSessionCancellationShortcut()
             overlayWindowController.dismiss()
             refreshStatus(force: true)
-            announceAccessibility("Transcript inserted")
+            announceAccessibility(
+                dictationCoordinator.isCommandSession ? "Command applied" : "Transcript inserted"
+            )
         case .insertionUnverified(let message):
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = message
@@ -599,6 +744,18 @@ final class AppModel: ObservableObject {
                 .rawTranscriptFallback(message: "\(fallback.title) · Original text pasted")
             )
             announceAccessibility(statusText)
+        case .commandFeedback(let message, let canCopyResult):
+            shortcutService.unregisterSessionCancellationShortcut()
+            statusText = message
+            primaryActionTitle = "Start Dictation"
+            isPrimaryActionEnabled = true
+            canCancel = false
+            canDismissDeliveryStatus = true
+            canCopyCommandResult = canCopyResult
+            overlayWindowController.present(
+                .commandFeedback(message: message, canCopyResult: canCopyResult)
+            )
+            announceAccessibility(message)
         case .noSpeech:
             shortcutService.unregisterSessionCancellationShortcut()
             statusText = "No speech detected"
@@ -657,6 +814,31 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func applyCommandProgress(_ state: DictationSessionState) -> Bool {
+        let overlay: OverlayViewState
+        switch state {
+        case .preparing:
+            statusText = "Starting command…"
+            overlay = .commandWorking(message: statusText)
+        case .recording(let recording):
+            statusText = "Listening for command…"
+            overlay = .commandListening(elapsed: recording.elapsed)
+        case .finalizing, .completed, .transcribing:
+            statusText = "Transcribing command…"
+            overlay = .commandWorking(message: statusText)
+        case .postProcessing, .inserting:
+            statusText = "Applying command…"
+            overlay = .commandWorking(message: statusText)
+        default:
+            return false
+        }
+        primaryActionTitle = "Start Dictation"
+        isPrimaryActionEnabled = false
+        canCancel = true
+        overlayWindowController.present(overlay)
+        return true
+    }
+
     private func formatDuration(_ duration: TimeInterval) -> String {
         let totalSeconds = max(0, Int(duration.rounded(.down)))
         return String(
@@ -704,6 +886,7 @@ final class AppModel: ObservableObject {
             .insertionUnverified,
             .clipboardFallback,
             .rawTranscriptFallback,
+            .commandFeedback,
             .noSpeech:
             return .editable
         case .transcriptionFailed(let failure)

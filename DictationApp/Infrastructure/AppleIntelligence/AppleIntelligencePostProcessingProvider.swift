@@ -62,18 +62,32 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
     }
 
     func process(_ request: PostProcessingRequest) async throws -> String {
-        guard request.model == .curated(Self.modelID) else {
-            throw ProviderOperationFailure.scopedConfiguration(
-                kind: .model,
-                message: "Choose the Apple Intelligence system model in Settings."
-            )
-        }
+        try validateModel(request.model)
         guard #available(macOS 26.0, *) else {
             throw ProviderOperationFailure.operation(
                 message: "Apple Intelligence cleanup requires macOS 26 or later."
             )
         }
         return try await Self.generateCleanup(request)
+    }
+
+    func process(_ request: TextCommandRequest) async throws -> String {
+        try validateModel(request.model)
+        guard #available(macOS 26.0, *) else {
+            throw ProviderOperationFailure.operation(
+                message: "Commands with Apple Intelligence require macOS 26 or later."
+            )
+        }
+        return try await Self.generateCommandReplacement(request)
+    }
+
+    private func validateModel(_ model: ModelSelection) throws {
+        guard model == .curated(Self.modelID) else {
+            throw ProviderOperationFailure.scopedConfiguration(
+                kind: .model,
+                message: "Choose the Apple Intelligence system model in Settings."
+            )
+        }
     }
 
     @available(macOS 26.0, *)
@@ -128,8 +142,39 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
         return edited
     }
 
+    @available(macOS 26.0, *)
+    @concurrent
+    private static func generateCommandReplacement(
+        _ request: TextCommandRequest
+    ) async throws -> String {
+        // The on-device model follows compound edits more reliably when both fields are in its prompt.
+        let edit = try request.prepare(instructionInInput: true)
+        if let message = unavailabilityMessage {
+            throw ProviderOperationFailure.operation(message: message)
+        }
+
+        let session = LanguageModelSession(
+            instructions: Instructions(edit.instructions)
+        )
+        let replacement: AppleCommandReplacement
+        do {
+            let response = try await session.respond(
+                to: Prompt(edit.input),
+                generating: AppleCommandReplacement.self,
+                includeSchemaInPrompt: true,
+                options: GenerationOptions(samplingMode: .greedy)
+            )
+            replacement = response.content
+        } catch {
+            try Task.checkCancellation()
+            throw generationFailure(error, isCommand: true)
+        }
+        return try request.validatedReplacement(replacement.replacementText)
+    }
+
     private nonisolated static func generationFailure(
-        _ error: any Error
+        _ error: any Error,
+        isCommand: Bool = false
     ) -> ProviderOperationFailure {
         if error is CancellationError {
             return .cancelled
@@ -138,18 +183,24 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
             switch failure {
             case .unsupportedLanguageOrLocale:
                 return .operation(
-                    message: "Apple Intelligence cleanup does not support this language."
+                    message: isCommand
+                        ? "Apple Intelligence does not support the language in this command."
+                        : "Apple Intelligence cleanup does not support this language."
                 )
             case .contextSizeExceeded:
                 return .operation(
-                    message: "This transcript is too long for Apple Intelligence cleanup."
+                    message: isCommand
+                        ? "Select a shorter passage or use a shorter instruction with Apple Intelligence."
+                        : "This transcript is too long for Apple Intelligence cleanup."
                 )
             default:
                 break
             }
         }
         return .operation(
-            message: "Apple Intelligence could not clean up this transcript."
+            message: isCommand
+                ? "Apple Intelligence could not apply this command."
+                : "Apple Intelligence could not clean up this transcript."
         )
     }
 
@@ -251,4 +302,11 @@ final class AppleIntelligencePostProcessingProvider: PostProcessingProvider {
             return literal.lowercased()
         }
     }
+}
+
+@available(macOS 26.0, *)
+@Generable
+private nonisolated struct AppleCommandReplacement {
+    @Guide(description: "The exact replacement text. Use an empty string when the request cannot be applied.")
+    let replacementText: String
 }

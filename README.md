@@ -10,7 +10,7 @@ This project is developed through a specification-driven, AI-assisted engineerin
 ## Features
 
 - Full native Settings window with General, Transcription, Post-processing, and Providers destinations
-- Configurable global shortcuts for toggle and hold-to-dictate recording
+- Configurable global shortcuts for toggle dictation, hold-to-dictate, and Command Mode
 - Preferred microphone selection with automatic System Default fallback
 - Native, non-activating recording overlay
 - Provider and model selection for transcription
@@ -83,12 +83,26 @@ in macOS Keyboard settings.
 
 After transcription, the app inserts the text at the currently focused cursor. If insertion fails or cannot be confirmed, the transcript remains on the clipboard for manual paste.
 
+### Command Mode
+
+Select text in an editable field, hold **Fn–Control**, speak an instruction
+such as “Translate this to Spanish,” and release to apply it. Command Mode
+checks the selection before starting to record, then checks it again before
+replacing it. If the target changes during processing, use **Copy Result**
+to recover the rewrite.
+
+Change or disable the shortcut in **Settings → General**. On keyboards
+without an Apple Fn key, you can assign **Command–Control–Option**.
+Choose the model in **Settings → Post-processing**. Command Mode uses the
+selected model regardless of the **Enable transcript cleanup** setting.
+
 ## Privacy
 
 OpenAI receives completed audio after Stop when selected for transcription.
 When selected for cleanup, it receives the raw transcript in a separate
-request. Apple On-Device transcription and Apple Intelligence cleanup
-process their inputs on the Mac. Provider credentials remain in macOS
-Keychain. The app deletes temporary recordings after successful
+request. In Command Mode, the cleanup provider receives the selected text
+and the transcribed instruction. Apple On-Device transcription and Apple
+Intelligence cleanup process their inputs on the Mac. Provider credentials
+remain in macOS Keychain. The app deletes temporary recordings after successful
 transcription and excludes audio, transcripts, credentials, and clipboard
 contents from its logs.

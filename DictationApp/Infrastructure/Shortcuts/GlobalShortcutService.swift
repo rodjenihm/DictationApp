@@ -5,6 +5,7 @@ import Foundation
 enum GlobalShortcutRegistrationError: LocalizedError, Equatable {
     case missingModifier
     case standaloneFunctionKeyRequiresHold
+    case invalidCommandShortcut
     case functionKeyPermissionRequired
     case functionKeyEventTapUnavailable
     case duplicateBindings
@@ -19,12 +20,14 @@ enum GlobalShortcutRegistrationError: LocalizedError, Equatable {
             "Choose Fn–Space or a shortcut that includes Command, Option, Control, or Shift."
         case .standaloneFunctionKeyRequiresHold:
             "Use Fn–Space for toggle dictation. Fn alone is available for hold to dictate."
+        case .invalidCommandShortcut:
+            "Choose Fn–Control, Control–Option–Command, Fn–Space, or a shortcut with a modifier and a regular key."
         case .functionKeyPermissionRequired:
-            "Allow DictationApp in Accessibility settings to use global Fn shortcuts, then try again."
+            "Allow DictationApp in Accessibility settings to use this global shortcut, then try again."
         case .functionKeyEventTapUnavailable:
-            "The global Fn shortcut listener could not start. Try again or choose another shortcut."
+            "The global shortcut listener could not start. Try again or choose another shortcut."
         case .duplicateBindings:
-            "Choose different shortcuts for toggle dictation and hold to dictate."
+            "Choose different shortcuts for toggle dictation, hold to dictate, and Command Mode."
         case .reservedBySystem:
             "That shortcut is reserved by macOS. Choose another combination."
         case .conflict:
@@ -60,6 +63,9 @@ final class GlobalShortcutService {
     var onHoldShortcutPressed: ((ContinuousClock.Instant) -> Void)?
     var onHoldShortcutReleased: ((ContinuousClock.Instant) -> Void)?
     var onHoldShortcutCancelled: (() -> Void)?
+    var onCommandShortcutPressed: ((ContinuousClock.Instant) -> Void)?
+    var onCommandShortcutReleased: ((ContinuousClock.Instant) -> Void)?
+    var onCommandShortcutCancelled: (() -> Void)?
     var onSessionCancellationShortcutPressed: (() -> Void)?
     var onShortcutCaptured: ((GlobalShortcut) -> Void)? {
         didSet { functionMonitor.isCapturingShortcut = onShortcutCaptured != nil }
@@ -67,8 +73,10 @@ final class GlobalShortcutService {
 
     var activeShortcut: GlobalShortcut? { toggleRegistration?.shortcut }
     var activeHoldShortcut: GlobalShortcut? { holdRegistration?.shortcut }
+    var activeCommandShortcut: GlobalShortcut? { commandRegistration?.shortcut }
     private(set) var registrationError: GlobalShortcutRegistrationError?
     private(set) var holdRegistrationError: GlobalShortcutRegistrationError?
+    private(set) var commandRegistrationError: GlobalShortcutRegistrationError?
 
     private struct Registration {
         let shortcut: GlobalShortcut
@@ -81,13 +89,15 @@ final class GlobalShortcutService {
     private var eventHandlerRef: EventHandlerRef?
     private var toggleRegistration: Registration?
     private var holdRegistration: Registration?
+    private var commandRegistration: Registration?
     private var isHoldKeyDown = false
+    private var isCommandKeyDown = false
     private var cancellationRegistration: Registration?
     private var holdCancellationRegistration: Registration?
     private var nextHotKeyID: UInt32 = 1
     private let functionMonitor = FunctionShortcutMonitor()
 
-    func start(toggle: GlobalShortcut, hold: GlobalShortcut?) throws {
+    func start(toggle: GlobalShortcut, hold: GlobalShortcut?, command: GlobalShortcut?) throws {
         guard eventHandlerRef == nil else {
             return
         }
@@ -114,6 +124,7 @@ final class GlobalShortcutService {
                 .eventHandlerRegistrationFailed(status)
             registrationError = error
             holdRegistrationError = hold == nil ? nil : error
+            commandRegistrationError = command == nil ? nil : error
             throw error
         }
 
@@ -124,36 +135,49 @@ final class GlobalShortcutService {
         registerShortcuts(
             toggle: toggle,
             hold: hold,
+            command: command,
             registerToggle: true,
-            registerHold: true
+            registerHold: true,
+            registerCommand: true
         )
 
-        if let error = registrationError ?? holdRegistrationError {
+        if let error = registrationError ?? holdRegistrationError ?? commandRegistrationError {
             throw error
         }
     }
 
-    func retryPermissionBlockedShortcuts(toggle: GlobalShortcut, hold: GlobalShortcut?) -> Bool {
+    func retryPermissionBlockedShortcuts(
+        toggle: GlobalShortcut,
+        hold: GlobalShortcut?,
+        command: GlobalShortcut?
+    ) -> Bool {
         let retryToggle = registrationError == .functionKeyPermissionRequired
         let retryHold = holdRegistrationError == .functionKeyPermissionRequired
-        guard retryToggle || retryHold, CGPreflightPostEventAccess() else {
+        let retryCommand = commandRegistrationError == .functionKeyPermissionRequired
+        guard retryToggle || retryHold || retryCommand, CGPreflightPostEventAccess() else {
             return false
         }
 
         registerShortcuts(
             toggle: toggle,
             hold: hold,
+            command: command,
             registerToggle: retryToggle,
-            registerHold: retryHold
+            registerHold: retryHold,
+            registerCommand: retryCommand
         )
-        return (retryToggle && toggleRegistration != nil) || (retryHold && holdRegistration != nil)
+        return (retryToggle && toggleRegistration != nil)
+            || (retryHold && holdRegistration != nil)
+            || (retryCommand && commandRegistration != nil)
     }
 
     private func registerShortcuts(
         toggle: GlobalShortcut,
         hold: GlobalShortcut?,
+        command: GlobalShortcut?,
         registerToggle: Bool,
-        registerHold: Bool
+        registerHold: Bool,
+        registerCommand: Bool
     ) {
         defer { updateFunctionBindings() }
 
@@ -182,22 +206,39 @@ final class GlobalShortcutService {
         } else if registerHold {
             holdRegistrationError = nil
         }
+
+        if registerCommand, let command {
+            do throws(GlobalShortcutRegistrationError) {
+                guard command != toggle, command != hold else {
+                    throw .duplicateBindings
+                }
+                try validateCandidate(command, forCommand: true)
+                commandRegistration = try register(command)
+                commandRegistrationError = nil
+            } catch {
+                commandRegistrationError = error
+            }
+        } else if registerCommand {
+            commandRegistrationError = nil
+        }
     }
 
     func replaceShortcuts(
         toggle: GlobalShortcut,
         hold: GlobalShortcut?,
+        command: GlobalShortcut?,
         updateToggle: Bool,
         updateHold: Bool,
+        updateCommand: Bool,
         committing: () throws -> Void
     ) throws {
-        guard updateToggle || updateHold else {
+        guard updateToggle || updateHold || updateCommand else {
             try committing()
             return
         }
         defer { updateFunctionBindings() }
 
-        try validateDistinctShortcuts(toggle: toggle, hold: hold)
+        try validateDistinctShortcuts(toggle: toggle, hold: hold, command: command)
         if updateToggle {
             guard !toggle.isStandaloneFunctionKey else {
                 throw GlobalShortcutRegistrationError.standaloneFunctionKeyRequiresHold
@@ -207,8 +248,11 @@ final class GlobalShortcutService {
         if updateHold, let hold {
             try validateCandidate(hold)
         }
+        if updateCommand, let command {
+            try validateCandidate(command, forCommand: true)
+        }
 
-        let existing = [toggleRegistration, holdRegistration].compactMap { $0 }
+        let existing = [toggleRegistration, holdRegistration, commandRegistration].compactMap { $0 }
         var additions: [Registration] = []
 
         func candidate(for shortcut: GlobalShortcut) throws -> Registration {
@@ -223,6 +267,7 @@ final class GlobalShortcutService {
 
         let newToggle: Registration?
         let newHold: Registration?
+        let newCommand: Registration?
         do {
             newToggle = updateToggle
                 ? try candidate(for: toggle)
@@ -230,6 +275,9 @@ final class GlobalShortcutService {
             newHold = updateHold
                 ? try hold.map { try candidate(for: $0) }
                 : holdRegistration
+            newCommand = updateCommand
+                ? try command.map { try candidate(for: $0) }
+                : commandRegistration
             // Keep current bindings active until provider and settings writes succeed.
             try committing()
         } catch {
@@ -240,37 +288,48 @@ final class GlobalShortcutService {
         }
 
         for registration in existing
-        where registration.id != newToggle?.id && registration.id != newHold?.id {
+        where registration.id != newToggle?.id
+            && registration.id != newHold?.id
+            && registration.id != newCommand?.id {
             unregister(registration)
         }
 
         if holdRegistration?.id != newHold?.id {
             isHoldKeyDown = false
         }
+        if commandRegistration?.id != newCommand?.id {
+            isCommandKeyDown = false
+        }
         toggleRegistration = newToggle
         holdRegistration = newHold
+        commandRegistration = newCommand
         if updateToggle {
             registrationError = nil
         }
         if updateHold {
             holdRegistrationError = nil
         }
+        if updateCommand {
+            commandRegistrationError = nil
+        }
     }
 
     func validateDistinctShortcuts(
         toggle: GlobalShortcut,
-        hold: GlobalShortcut?
+        hold: GlobalShortcut?,
+        command: GlobalShortcut? = nil
     ) throws(GlobalShortcutRegistrationError) {
-        guard hold != toggle else {
+        guard hold != toggle, command != toggle, command == nil || command != hold else {
             throw .duplicateBindings
         }
     }
 
     func validateCandidate(
-        _ shortcut: GlobalShortcut
+        _ shortcut: GlobalShortcut,
+        forCommand: Bool = false
     ) throws(GlobalShortcutRegistrationError) {
-        guard shortcut.isConfigurable else {
-            throw GlobalShortcutRegistrationError.missingModifier
+        guard forCommand ? shortcut.isCommandConfigurable : shortcut.isConfigurable else {
+            throw forCommand ? .invalidCommandShortcut : .missingModifier
         }
 
         guard !isReservedBySystem(shortcut) else {
@@ -278,7 +337,7 @@ final class GlobalShortcutService {
         }
     }
 
-    func registerSessionCancellationShortcut(forHold: Bool) throws {
+    func registerSessionCancellationShortcut(forHold: Bool, forCommand: Bool = false) throws {
         guard cancellationRegistration == nil else {
             return
         }
@@ -302,11 +361,13 @@ final class GlobalShortcutService {
         }
 
         functionMonitor.capturesEscape = true
-        if forHold, let hold = activeHoldShortcut, !hold.usesFunctionModifier {
+        functionMonitor.capturesCommandEscape = forCommand
+        let heldShortcut = forCommand ? activeCommandShortcut : (forHold ? activeHoldShortcut : nil)
+        if let heldShortcut, !heldShortcut.usesEventTap {
             // Escape can also be pressed before releasing the hold modifiers.
             let modifiedEscape = GlobalShortcut(
                 keyCode: escapeCode,
-                modifiers: hold.modifiers
+                modifiers: heldShortcut.modifiers
             )
             if !isReservedBySystem(modifiedEscape) {
                 holdCancellationRegistration = try? register(modifiedEscape)
@@ -320,6 +381,7 @@ final class GlobalShortcutService {
         }
         cancellationRegistration = nil
         functionMonitor.capturesEscape = false
+        functionMonitor.capturesCommandEscape = false
         unregisterHoldCancellationShortcut()
     }
 
@@ -332,6 +394,9 @@ final class GlobalShortcutService {
         if let holdRegistration {
             unregister(holdRegistration)
         }
+        if let commandRegistration {
+            unregister(commandRegistration)
+        }
         functionMonitor.stop()
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)
@@ -339,8 +404,10 @@ final class GlobalShortcutService {
 
         toggleRegistration = nil
         holdRegistration = nil
+        commandRegistration = nil
         eventHandlerRef = nil
         isHoldKeyDown = false
+        isCommandKeyDown = false
         onShortcutCaptured = nil
     }
 
@@ -354,7 +421,7 @@ final class GlobalShortcutService {
         let candidateID = nextHotKeyID
         nextHotKeyID &+= 1
 
-        if shortcut.usesFunctionModifier {
+        if shortcut.usesEventTap {
             guard CGPreflightPostEventAccess() else {
                 throw .functionKeyPermissionRequired
             }
@@ -400,10 +467,11 @@ final class GlobalShortcutService {
     private func updateFunctionBindings() {
         let toggle = activeShortcut.flatMap { $0.usesFunctionModifier ? $0 : nil }
         let hold = activeHoldShortcut.flatMap { $0.usesFunctionModifier ? $0 : nil }
-        if toggle == nil, hold == nil {
+        let command = activeCommandShortcut.flatMap { $0.usesEventTap ? $0 : nil }
+        if toggle == nil, hold == nil, command == nil {
             functionMonitor.stop()
         } else {
-            functionMonitor.updateBindings(toggle: toggle, hold: hold)
+            functionMonitor.updateBindings(toggle: toggle, hold: hold, command: command)
         }
     }
 
@@ -454,6 +522,19 @@ final class GlobalShortcutService {
                 isHoldKeyDown = false
                 onHoldShortcutCancelled?()
             }
+        case .commandPressed, .commandReleased:
+            if let commandRegistration {
+                handleHotKey(
+                    id: commandRegistration.id,
+                    isPressed: action == .commandPressed,
+                    receivedAt: receivedAt
+                )
+            }
+        case .commandCancelled:
+            if isCommandKeyDown {
+                isCommandKeyDown = false
+                onCommandShortcutCancelled?()
+            }
         case .togglePressed(let replacesHold):
             if replacesHold {
                 isHoldKeyDown = false
@@ -461,6 +542,7 @@ final class GlobalShortcutService {
             onShortcutPressed?(receivedAt, replacesHold)
         case .cancelSession:
             isHoldKeyDown = false
+            isCommandKeyDown = false
             onSessionCancellationShortcutPressed?()
         }
     }
@@ -487,6 +569,18 @@ final class GlobalShortcutService {
                 onShortcutCaptured(hold.shortcut)
             } else {
                 onHoldShortcutPressed?(receivedAt)
+            }
+        } else if let command = commandRegistration, id == command.id {
+            guard isPressed != isCommandKeyDown else {
+                return
+            }
+            isCommandKeyDown = isPressed
+            if !isPressed {
+                onCommandShortcutReleased?(receivedAt)
+            } else if let onShortcutCaptured {
+                onShortcutCaptured(command.shortcut)
+            } else {
+                onCommandShortcutPressed?(receivedAt)
             }
         } else if let toggle = toggleRegistration, id == toggle.id, isPressed {
             if let onShortcutCaptured {

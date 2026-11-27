@@ -8,6 +8,9 @@ final class FunctionShortcutMonitor {
         case holdPressed
         case holdReleased
         case holdCancelled
+        case commandPressed
+        case commandReleased
+        case commandCancelled
         case togglePressed(replacesHold: Bool)
         case cancelSession
     }
@@ -21,7 +24,12 @@ final class FunctionShortcutMonitor {
     private enum SpacePress {
         case consumed
         case hold
+        case command
     }
+
+    private static let shortcutFlags: CGEventFlags = [
+        .maskSecondaryFn, .maskCommand, .maskAlternate, .maskControl, .maskShift,
+    ]
 
     var onAction: ((Action, ContinuousClock.Instant) -> Void)?
     var isCapturingShortcut = false {
@@ -32,16 +40,21 @@ final class FunctionShortcutMonitor {
         }
     }
     var capturesEscape = false
+    var capturesCommandEscape = false
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var toggle: GlobalShortcut?
     private var hold: GlobalShortcut?
+    private var command: GlobalShortcut?
+    private var commandFlags: CGEventFlags = []
     private var bindingRevision = 0
     private var functionPress = FunctionPress.idle
     private var pendingHold: Task<Void, Never>?
     private var spacePress: SpacePress?
     private var isEscapeDown = false
+    private var modifierFlags: CGEventFlags = []
+    private var isModifierCommandDown = false
 
     func start() -> Bool {
         if let tap {
@@ -64,23 +77,33 @@ final class FunctionShortcutMonitor {
 
         self.tap = tap
         self.source = source
+        modifierFlags = CGEventSource.flagsState(.combinedSessionState)
+            .intersection(Self.shortcutFlags)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         return true
     }
 
-    func updateBindings(toggle: GlobalShortcut?, hold: GlobalShortcut?) {
-        guard self.toggle != toggle || self.hold != hold else {
+    func updateBindings(toggle: GlobalShortcut?, hold: GlobalShortcut?, command: GlobalShortcut?) {
+        guard self.toggle != toggle || self.hold != hold || self.command != command else {
             return
         }
         self.toggle = toggle
         self.hold = hold
+        self.command = command
+        commandFlags = switch command {
+        case .functionControl: [.maskSecondaryFn, .maskControl]
+        case .commandControlOption: [.maskCommand, .maskControl, .maskAlternate]
+        case .functionSpace: .maskSecondaryFn
+        default: []
+        }
         bindingRevision &+= 1
         resetFunctionPress()
+        isModifierCommandDown = false
         if spacePress != nil {
             spacePress = .consumed
         }
 
-        if toggle == nil, hold == nil {
+        if toggle == nil, hold == nil, command == nil {
             stop()
         }
     }
@@ -96,10 +119,14 @@ final class FunctionShortcutMonitor {
         tap = nil
         toggle = nil
         hold = nil
+        command = nil
+        commandFlags = []
         bindingRevision &+= 1
         resetFunctionPress()
         spacePress = nil
         isEscapeDown = false
+        modifierFlags = []
+        isModifierCommandDown = false
     }
 
     private func handle(
@@ -112,26 +139,41 @@ final class FunctionShortcutMonitor {
             if functionPress == .holding || spacePress == .hold {
                 emit(.holdCancelled)
             }
+            if isModifierCommandDown || spacePress == .command {
+                emit(.commandCancelled)
+            }
             resetFunctionPress()
             spacePress = nil
             isEscapeDown = false
+            isModifierCommandDown = false
+            modifierFlags = CGEventSource.flagsState(.combinedSessionState)
+                .intersection(Self.shortcutFlags)
             if type == .tapDisabledByTimeout, let tap {
                 CGEvent.tapEnable(tap: tap, enable: true)
             }
             return false
         }
 
-        let isFnDown = flags.contains(.maskSecondaryFn)
-        let hasStandardModifier = !flags.intersection(
-            [.maskCommand, .maskAlternate, .maskControl, .maskShift]
-        ).isEmpty
+        let eventModifiers = flags.intersection(Self.shortcutFlags)
+        let previousModifiers = modifierFlags
+        if type == .flagsChanged {
+            modifierFlags = eventModifiers
+            if isModifierCommandDown, !modifierFlags.contains(commandFlags) {
+                isModifierCommandDown = false
+                emit(.commandReleased)
+            }
+        }
+        let isFnDown = eventModifiers.contains(.maskSecondaryFn)
+        let hasStandardModifier = !eventModifiers.subtracting(.maskSecondaryFn).isEmpty
 
         // Consume the companion release even if the user has since released Fn.
         if keyCode == UInt32(kVK_Space), let spacePress {
             if type == .keyUp {
                 self.spacePress = nil
-                if spacePress == .hold {
-                    emit(.holdReleased)
+                switch spacePress {
+                case .hold: emit(.holdReleased)
+                case .command: emit(.commandReleased)
+                case .consumed: break
                 }
             }
             return true
@@ -142,11 +184,25 @@ final class FunctionShortcutMonitor {
             }
             return true
         }
+
         guard !isCapturingShortcut else {
             return false
         }
 
         if type == .flagsChanged {
+            if command?.isCommandModifierChord == true,
+                modifierFlags == commandFlags,
+                !previousModifiers.contains(commandFlags)
+            {
+                cancelFunctionPress()
+                if spacePress == .hold {
+                    spacePress = .consumed
+                    emit(.holdCancelled)
+                }
+                isModifierCommandDown = true
+                emit(.commandPressed)
+                return false
+            }
             if keyCode == GlobalShortcut.functionKeyCode {
                 if !isFnDown {
                     if functionPress == .holding {
@@ -166,15 +222,20 @@ final class FunctionShortcutMonitor {
             return false
         }
 
+        let hasCommandModifiers = capturesCommandEscape && !eventModifiers.isEmpty
+            && commandFlags.contains(eventModifiers)
+        if keyCode == UInt32(kVK_Escape), capturesEscape,
+            (isFnDown && !hasStandardModifier) || hasCommandModifiers
+        {
+            resetFunctionPress()
+            isEscapeDown = true
+            emit(.cancelSession)
+            return true
+        }
+
         if isFnDown && !hasStandardModifier {
-            if keyCode == UInt32(kVK_Escape) && capturesEscape {
-                resetFunctionPress()
-                isEscapeDown = true
-                emit(.cancelSession)
-                return true
-            }
             if keyCode == UInt32(kVK_Space),
-                toggle == .functionSpace || hold == .functionSpace
+                toggle == .functionSpace || hold == .functionSpace || command == .functionSpace
             {
                 guard !isRepeat else {
                     return true
@@ -184,6 +245,12 @@ final class FunctionShortcutMonitor {
                 if toggle == .functionSpace {
                     spacePress = .consumed
                     emit(.togglePressed(replacesHold: replacesHold))
+                } else if command == .functionSpace {
+                    if replacesHold {
+                        emit(.holdCancelled)
+                    }
+                    spacePress = .command
+                    emit(.commandPressed)
                 } else {
                     spacePress = .hold
                     emit(.holdPressed)
@@ -240,7 +307,7 @@ final class FunctionShortcutMonitor {
                 return
             }
             switch action {
-            case .holdPressed, .togglePressed:
+            case .holdPressed, .togglePressed, .commandPressed:
                 guard !self.isCapturingShortcut else {
                     return
                 }
